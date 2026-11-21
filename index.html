@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Comissão Senhor da Agonia</title>
+  <meta name="theme-color" content="#2b1d16">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Comissão">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Entrada -->
+  <section id="login" hidden>
+    <img src="logo.png" alt="Senhor D'Agonia – Comissão" class="login-logo">
+    <form id="form-login" autocomplete="off">
+      <label for="codigo">Código da comissão</label>
+      <input id="codigo" name="codigo" type="password" required autocomplete="current-password">
+      <button type="submit" class="btn primario">Entrar</button>
+      <p id="login-erro" class="erro" hidden></p>
+    </form>
+  </section>
+
+  <!-- App -->
+  <div id="app" hidden>
+    <header class="topo">
+      <img src="icons/icon-192.png" alt="">
+      <h1 id="titulo">Início</h1>
+    </header>
+    <main id="conteudo"></main>
+    <nav class="nav">
+      <button data-vista="inicio"><span>🏠</span>Início</button>
+      <button data-vista="calendario"><span>📅</span>Calendário</button>
+      <button data-vista="despesas"><span>💶</span>Despesas</button>
+      <button data-vista="equipas"><span>👥</span>Equipas</button>
+      <button data-vista="listas"><span>⚙️</span>Listas</button>
+    </nav>
+  </div>
+
+  <!-- Janela (sheet) -->
+  <div id="sheet-wrap" hidden>
+    <div class="sheet-fundo" data-acao="fecharSheet"></div>
+    <div class="sheet" role="dialog" aria-modal="true">
+      <div class="sheet-topo">
+        <h2 id="sheet-titulo"></h2>
+        <button class="fechar" data-acao="fecharSheet" aria-label="Fechar">✕</button>
+      </div>
+      <div id="sheet-corpo"></div>
+    </div>
+  </div>
+
+  <div id="toast" hidden></div>
+  <div id="carregar"><div class="spinner"></div></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
