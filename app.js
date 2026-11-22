@@ -683,4 +683,30 @@ sb.auth.onAuthStateChange((evento, sessao) => {
   }
 });
 
+/* =========================================================
+   Atualização automática dos dados
+   (ao voltar à app, a cada 30 s com a app aberta e no botão ↻)
+   ========================================================= */
+let aAtualizar = false;
+async function atualizar(avisar = false) {
+  if ($('#app').hidden || aAtualizar) return;
+  aAtualizar = true;
+  $('#btn-atualizar')?.classList.add('a-girar');
+  try {
+    await carregar();
+    if ($('#sheet-wrap').hidden) render(); // não mexe num formulário aberto
+    if (avisar) toast('Dados atualizados');
+  } catch (e) {
+    console.error(e);
+    if (avisar) toast(erroLegivel(e), true);
+  } finally {
+    aAtualizar = false;
+    $('#btn-atualizar')?.classList.remove('a-girar');
+  }
+}
+ACOES.atualizar = () => atualizar(true);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') atualizar(); });
+window.addEventListener('pageshow', () => atualizar());
+setInterval(() => { if (document.visibilityState === 'visible') atualizar(); }, 30000);
+
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
