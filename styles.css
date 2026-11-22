@@ -181,4 +181,35 @@ textarea { min-height: 70px; resize: vertical; }
 /* festa */
 .lista .hora { width: 52px; flex: none; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--cafe); font-size: 15px; display: flex; flex-direction: column; }
 .lista .hora span { font-weight: 400; font-size: 12px; color: var(--suave); }
-.nav button { font-size: 10px; }
+
+/* separadores dentro de Listas */
+.segmentos { display: flex; background: var(--creme); border-radius: 12px; padding: 4px; gap: 4px; margin-bottom: 14px; }
+.seg { flex: 1; border: 0; background: none; padding: 9px 6px; border-radius: 9px; font-weight: 600; font-size: 14px; color: var(--suave); cursor: pointer; }
+.seg.ativo { background: #fff; color: var(--cafe); box-shadow: 0 1px 3px rgba(43,29,22,.15); }
+
+/* encomendas */
+.dia .ev.enc { background: #fef3c7; color: #92400e; }
+.dia .ev.enc.ok { background: #dcfce7; color: #166534; }
+.estado { border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; font-size: 15px; display: flex; flex-direction: column; gap: 2px; }
+.estado span { font-size: 13px; opacity: .8; }
+.estado.pendente { background: #fef3c7; color: #92400e; }
+.estado.feito { background: #dcfce7; color: #166534; }
+.estado.removida { background: #f1f1f1; color: #666; }
+.estado-ponto { width: 30px; height: 30px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 700; }
+.estado-ponto.pendente { background: #fef3c7; }
+.estado-ponto.feito { background: #dcfce7; color: #166534; }
+.estado-ponto.removida { background: #eee; color: #888; }
+.enc-linha.removida .princ, li.inativa .princ { opacity: .55; }
+.etiqueta { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 999px; margin-left: 6px; vertical-align: middle; }
+.etiqueta.pendente { background: #fef3c7; color: #92400e; }
+.etiqueta.feito { background: #dcfce7; color: #166534; }
+.item-linha { display: grid; grid-template-columns: 1fr 76px 40px; gap: 6px; margin-bottom: 6px; }
+.item-linha .btn { padding: 0; }
+
+/* festa */
+.resumo-linha { display: flex; justify-content: space-between; font-size: 14px; padding: 4px 0; border-top: 1px dashed var(--linha); }
+.resumo-linha .sub { color: var(--suave); }
+.lista .hora .ico { font-size: 22px; color: inherit; }
+.grelha-cats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cat-btn { border: 1px solid var(--linha); background: #fff; border-radius: 14px; padding: 16px 8px; font-weight: 700; font-size: 15px; color: var(--cafe); display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; }
+.cat-btn span { font-size: 28px; }
