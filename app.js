@@ -42,8 +42,9 @@ const fmtFds = sab => {
    Estado e dados
    ========================================================= */
 const TABELAS = ['equipas', 'funcoes', 'responsabilidades', 'categorias_despesa',
-  'pessoas', 'fins_de_semana', 'eventos', 'despesas', 'festa_atuacoes'];
+  'pessoas', 'fins_de_semana', 'eventos', 'despesas', 'festa_atuacoes', 'utilizadores'];
 const D = Object.fromEntries(TABELAS.map(t => [t, []]));
+D.atividade = [];
 const S = {
   vista: 'inicio',
   mes: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
@@ -58,16 +59,77 @@ const fdsPorSabado = sab => D.fins_de_semana.find(f => f.data_sabado === sab);
 async function carregar() {
   const res = await Promise.all(TABELAS.map(t => sb.from(t).select('*').order('id')));
   res.forEach((r, i) => { if (r.error) throw r.error; D[TABELAS[i]] = r.data; });
+  const at = await sb.from('atividade').select('*').order('id', { ascending: false }).limit(40);
+  if (!at.error) D.atividade = at.data;
+}
+
+/* =========================================================
+   Utilizadores: quem está a usar este dispositivo
+   ========================================================= */
+const CHAVE_DISP = 'comissao_dispositivo';
+function dispositivoId() {
+  let id = null;
+  try { id = localStorage.getItem(CHAVE_DISP); } catch {}
+  if (!id) {
+    id = (crypto.randomUUID ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16);
+      }));
+    try { localStorage.setItem(CHAVE_DISP, id); } catch {}
+  }
+  return id;
+}
+const utilizadorAtual = () => D.utilizadores.find(u => u.dispositivo === dispositivoId());
+function tipoAparelho() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'iPad';
+  if (/Android/.test(ua)) return /Mobile/.test(ua) ? 'Android' : 'Tablet Android';
+  return 'Computador';
+}
+
+// descrição curta de um registo, para o registo de atividade
+const NOMES_TABELA = {
+  equipas: 'a equipa', funcoes: 'a função', responsabilidades: 'a responsabilidade',
+  categorias_despesa: 'a categoria', pessoas: 'a pessoa', fins_de_semana: 'o fim de semana',
+  eventos: 'o evento', despesas: 'a despesa', festa_atuacoes: 'a atuação',
+};
+function descrever(tabela, v) {
+  if (!v) return '';
+  if (tabela === 'despesas') return `${porId('categorias_despesa', v.categoria_id)?.nome || ''} ${eur(v.preco)}`.trim();
+  if (tabela === 'fins_de_semana') return fmtFds(v.data_sabado);
+  if (tabela === 'festa_atuacoes') return v.artista;
+  return v.nome || '';
+}
+async function registarAtividade(acao, tabela, registoId, obj) {
+  const u = utilizadorAtual();
+  try {
+    await sb.from('atividade').insert({
+      utilizador_id: u?.id ?? null, nome: u?.nome ?? 'Desconhecido',
+      acao, tabela, registo_id: registoId ?? null,
+      descricao: NOMES_TABELA[tabela]
+        ? `${acao} ${NOMES_TABELA[tabela]}${descrever(tabela, obj) ? ': ' + descrever(tabela, obj) : ''}`
+        : acao,
+    });
+  } catch (e) { console.warn('atividade', e); }
 }
 
 async function guardar(tabela, valores, id) {
-  const q = id ? sb.from(tabela).update(valores).eq('id', id) : sb.from(tabela).insert(valores);
-  const { error } = await q;
-  if (error) throw error;
+  if (id) {
+    const { error } = await sb.from(tabela).update(valores).eq('id', id);
+    if (error) throw error;
+    await registarAtividade('alterou', tabela, id, { ...porId(tabela, id), ...valores });
+  } else {
+    const { data, error } = await sb.from(tabela).insert(valores).select('id').single();
+    if (error) throw error;
+    await registarAtividade('criou', tabela, data?.id, valores);
+  }
 }
 async function apagar(tabela, id) {
+  const antes = porId(tabela, id);
   const { error } = await sb.from(tabela).delete().eq('id', id);
   if (error) throw error;
+  await registarAtividade('apagou', tabela, id, antes);
 }
 
 function erroLegivel(e) {
@@ -648,8 +710,33 @@ const LISTAS = {
   categorias_despesa: { titulo: 'Categorias de despesa', exemplo: 'Ex.: Frango' },
 };
 
+const fmtQuando = iso => {
+  const d = new Date(iso);
+  return d.toLocaleDateString('pt-PT', { day: 'numeric', month: 'short' }) + ' · ' + d.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+};
+
 function vListas() {
-  return Object.entries(LISTAS).map(([t, cfg]) => `
+  const eu = utilizadorAtual();
+  const utilizadores = [...D.utilizadores].sort((a, b) => (b.ultimo_acesso || '').localeCompare(a.ultimo_acesso || ''));
+  return `
+    <div class="cartao">
+      <h3>Neste aparelho</h3>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="princ" style="flex:1"><b>${esc(eu?.nome || '—')}</b><div class="sub" style="font-size:13px;color:var(--suave)">${esc(eu?.aparelho || '')}</div></div>
+        <button class="btn peq" data-acao="mudarUtilizador">Mudar</button>
+      </div>
+    </div>
+    <div class="cartao">
+      <h3>Utilizadores (${utilizadores.length})</h3>
+      <ul class="lista">${utilizadores.map(u => `
+        <li><div class="princ"><b>${esc(u.nome)}</b>${u.id === eu?.id ? ' <span class="sub">(tu)</span>' : ''}<div class="sub">${esc(u.aparelho || 'Aparelho')} · último acesso ${u.ultimo_acesso ? fmtQuando(u.ultimo_acesso) : '—'}</div></div></li>`).join('')}</ul>
+    </div>
+    <div class="cartao">
+      <h3>Atividade recente</h3>
+      ${D.atividade.length ? `<ul class="lista">${D.atividade.map(a => `
+        <li><div class="princ"><b>${esc(a.nome)}</b> ${esc(a.descricao || a.acao)}<div class="sub">${fmtQuando(a.criado_em)}</div></div></li>`).join('')}</ul>`
+        : '<div class="vazio">Ainda não há atividade registada.</div>'}
+    </div>` + Object.entries(LISTAS).map(([t, cfg]) => `
     <div class="cartao">
       <h3>${cfg.titulo}</h3>
       ${D[t].length ? `<ul class="lista">${[...D[t]].sort((a, b) => a.nome.localeCompare(b.nome, 'pt')).map(x => `
@@ -727,6 +814,7 @@ const ACOES = {
   editarItem: el => abrirItem(el.dataset.tabela, Number(el.dataset.id)),
   filtroEquipa: el => { S.filtroEquipa = el.dataset.id; render(); },
   mes: el => { S.mes = new Date(S.mes.getFullYear(), S.mes.getMonth() + Number(el.dataset.d), 1); render(); },
+  mudarUtilizador: () => mostrarQuem(true),
   sair: async () => { if (confirm('Terminar sessão neste telemóvel?')) await sb.auth.signOut(); },
 };
 const fdsDaDespesa = id => {
@@ -757,16 +845,67 @@ $('#form-login').addEventListener('submit', async ev => {
   if (error) { erro.textContent = 'Código errado. Tenta outra vez.'; erro.hidden = false; }
 });
 
+function mostrarQuem(mudar = false) {
+  const u = utilizadorAtual();
+  const pessoas = [...D.pessoas].sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
+  $('#quem-lista').innerHTML = opt('', '— Escolhe o teu nome —', u?.pessoa_id ?? '')
+    + pessoas.map(p => opt(p.id, p.nome + (equipa(p.equipa_id) ? ' (' + equipa(p.equipa_id).nome + ')' : ''), u?.pessoa_id ?? '')).join('')
+    + opt('outro', 'O meu nome não está na lista', '');
+  $('#quem-nome').value = '';
+  $('#quem-outro').hidden = true;
+  $('#quem-cancelar').hidden = !mudar;
+  $('#login').hidden = true; $('#app').hidden = true; $('#quem').hidden = false;
+}
+$('#quem-lista').addEventListener('change', ev => {
+  $('#quem-outro').hidden = ev.target.value !== 'outro';
+  if (ev.target.value === 'outro') $('#quem-nome').focus();
+});
+$('#quem-cancelar').addEventListener('click', () => { $('#quem').hidden = true; $('#app').hidden = false; });
+$('#form-quem').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const escolha = $('#quem-lista').value;
+  const pessoa = escolha && escolha !== 'outro' ? porId('pessoas', escolha) : null;
+  const nome = pessoa ? pessoa.nome : $('#quem-nome').value.trim();
+  if (!nome) return toast('Escolhe ou escreve o teu nome.', true);
+  const btn = ev.target.querySelector('button[type=submit]');
+  btn.disabled = true;
+  try {
+    const atual = utilizadorAtual();
+    const valores = { nome, pessoa_id: pessoa?.id ?? null, aparelho: tipoAparelho(), ultimo_acesso: new Date().toISOString() };
+    if (atual) {
+      const { error } = await sb.from('utilizadores').update(valores).eq('id', atual.id);
+      if (error) throw error;
+    } else {
+      const { error } = await sb.from('utilizadores').insert({ ...valores, dispositivo: dispositivoId() });
+      if (error) throw error;
+    }
+    await carregar();
+    await registarAtividade(atual ? `passou a usar ${tipoAparelho() === 'Computador' ? 'este computador' : 'este ' + tipoAparelho()}` : `registou-se (${tipoAparelho()})`, 'utilizadores', utilizadorAtual()?.id, null);
+    await carregar();
+    $('#quem').hidden = true; $('#app').hidden = false;
+    render();
+    toast(`Olá, ${nome.split(' ')[0]}!`);
+  } catch (e) {
+    console.error(e); toast(erroLegivel(e), true);
+  } finally { btn.disabled = false; }
+});
+
 async function mostrar(sessao) {
   $('#carregar').hidden = false;
   if (!sessao) {
-    $('#app').hidden = true; $('#login').hidden = false; $('#codigo').value = '';
+    $('#app').hidden = true; $('#quem').hidden = true; $('#login').hidden = false; $('#codigo').value = '';
     fecharSheet();
   } else {
     try {
       await carregar();
-      $('#login').hidden = true; $('#app').hidden = false;
-      render();
+      const u = utilizadorAtual();
+      if (!u) mostrarQuem();
+      else {
+        $('#login').hidden = true; $('#quem').hidden = true; $('#app').hidden = false;
+        render();
+        sb.from('utilizadores').update({ ultimo_acesso: new Date().toISOString(), aparelho: tipoAparelho() })
+          .eq('id', u.id).then(() => {}, () => {});
+      }
     } catch (e) {
       console.error(e);
       toast(erroLegivel(e), true);

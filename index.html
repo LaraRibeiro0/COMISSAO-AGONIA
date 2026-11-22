@@ -26,6 +26,21 @@
     </form>
   </section>
 
+  <!-- Quem és? (primeira vez em cada aparelho) -->
+  <section id="quem" hidden>
+    <img src="logo.png" alt="Senhor D'Agonia – Comissão" class="login-logo quem-logo">
+    <form id="form-quem" autocomplete="off">
+      <h2>Quem está a usar este aparelho?</h2>
+      <p class="dica">Só é perguntado uma vez. Serve para saber quem usa a app e quem faz cada alteração.</p>
+      <select id="quem-lista"></select>
+      <div id="quem-outro" hidden>
+        <input id="quem-nome" type="text" placeholder="Nome e apelido" maxlength="60">
+      </div>
+      <button type="submit" class="btn primario">Continuar</button>
+      <button type="button" id="quem-cancelar" class="btn" hidden>Cancelar</button>
+    </form>
+  </section>
+
   <!-- App -->
   <div id="app" hidden>
     <header class="topo">
