@@ -152,7 +152,7 @@ textarea { min-height: 70px; resize: vertical; }
 .sheet {
   position: absolute; left: 0; right: 0; bottom: 0; max-height: 92dvh; overflow-y: auto; background: var(--fundo);
   border-radius: 18px 18px 0 0; padding: 0 16px calc(env(safe-area-inset-bottom) + 20px);
-  max-width: 640px; margin: 0 auto; animation: sobe .2s ease-out;
+  max-width: 640px; margin: 0 auto; animation: sobe .2s ease-out; overflow-x: hidden;
 }
 @keyframes sobe { from { transform: translateY(30px); opacity: .5; } }
 .sheet-topo { position: sticky; top: 0; background: var(--fundo); display: flex; align-items: center; justify-content: space-between; padding: 14px 0 10px; z-index: 1; }
@@ -183,8 +183,9 @@ textarea { min-height: 70px; resize: vertical; }
 .lista .hora span { font-weight: 400; font-size: 12px; color: var(--suave); }
 
 /* separadores dentro de Listas */
-.segmentos { display: flex; background: var(--creme); border-radius: 12px; padding: 4px; gap: 4px; margin-bottom: 14px; }
-.seg { flex: 1; border: 0; background: none; padding: 9px 6px; border-radius: 9px; font-weight: 600; font-size: 14px; color: var(--suave); cursor: pointer; }
+.segmentos { display: flex; background: var(--creme); border-radius: 12px; padding: 4px; gap: 4px; margin-bottom: 14px; overflow-x: auto; scrollbar-width: none; }
+.segmentos::-webkit-scrollbar { display: none; }
+.seg { flex: 1 0 auto; white-space: nowrap; border: 0; background: none; padding: 9px 6px; border-radius: 9px; font-weight: 600; font-size: 14px; color: var(--suave); cursor: pointer; }
 .seg.ativo { background: #fff; color: var(--cafe); box-shadow: 0 1px 3px rgba(43,29,22,.15); }
 
 /* encomendas */
@@ -213,3 +214,24 @@ textarea { min-height: 70px; resize: vertical; }
 .grelha-cats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .cat-btn { border: 1px solid var(--linha); background: #fff; border-radius: 14px; padding: 16px 8px; font-weight: 700; font-size: 15px; color: var(--cafe); display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; }
 .cat-btn span { font-size: 28px; }
+
+/* criado por */
+.autor { font-size: 11px; color: var(--suave); opacity: .85; margin-top: 2px; font-style: italic; }
+.kpi-linha { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; }
+.kpi-linha b { font-size: 20px; color: var(--cafe); }
+.pos { color: #15803d; }
+
+/* tarefas */
+.cartao-topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.cartao-topo h3 { margin: 0; }
+.estado-ponto.t-por_fazer { background: #f1ece4; color: var(--suave); }
+.estado-ponto.t-a_tratar { background: #dbeafe; color: #1d4ed8; }
+.estado-ponto.t-feita { background: #dcfce7; color: #166534; }
+.tarefa.feita b { text-decoration: line-through; opacity: .6; }
+.sub.desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.atrasada { color: var(--perigo); font-weight: 700; }
+.escolha { display: flex; gap: 6px; flex-wrap: wrap; }
+.escolha label { flex: 1; position: relative; }
+.escolha input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; pointer-events: none; }
+.escolha span { display: block; text-align: center; border: 1px solid var(--linha); background: #fff; border-radius: 10px; padding: 10px 6px; font-weight: 600; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.escolha input:checked + span { background: var(--cafe); color: #fff; border-color: var(--cafe); }

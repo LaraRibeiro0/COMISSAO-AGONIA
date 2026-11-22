@@ -43,7 +43,8 @@ const fmtFds = sab => {
    ========================================================= */
 const TABELAS = ['equipas', 'funcoes', 'responsabilidades', 'categorias_despesa',
   'pessoas', 'fins_de_semana', 'eventos', 'despesas', 'festa_atuacoes', 'utilizadores',
-  'produtos', 'encomendas_fixas', 'encomendas', 'festa_categorias', 'festa_responsaveis'];
+  'produtos', 'encomendas_fixas', 'encomendas', 'festa_categorias', 'festa_responsaveis',
+  'patrocinios', 'tarefas'];
 const D = Object.fromEntries(TABELAS.map(t => [t, []]));
 D.atividade = [];
 const S = {
@@ -55,6 +56,8 @@ const S = {
   listaSec: 'despesas', // Listas: despesas | encomendas | config
   encProd: '', encCat: '', encFds: '', // filtros das encomendas
   festaCat: '',         // filtro da festa
+  tarefasVer: 'abertas', // abertas | minhas | feitas
+  patTipo: '', patProd: '', // filtros dos patrocínios
 };
 const porId = (t, id) => D[t].find(x => x.id === Number(id));
 const equipa = id => porId('equipas', id);
@@ -136,6 +139,7 @@ const NOMES_TABELA = {
   eventos: 'o evento', despesas: 'a despesa', festa_atuacoes: 'na festa',
   produtos: 'o produto', encomendas_fixas: 'a encomenda fixa', encomendas: 'a encomenda',
   festa_categorias: 'a categoria da festa', festa_responsaveis: 'o responsável da festa',
+  patrocinios: 'o patrocínio', tarefas: 'a tarefa',
 };
 function descrever(tabela, v) {
   if (!v) return '';
@@ -159,6 +163,12 @@ async function registarAtividade(acao, tabela, registoId, obj) {
   } catch (e) { console.warn('atividade', e); }
 }
 
+// tabelas que guardam o nome de quem criou o registo
+const COM_AUTOR = new Set(['equipas', 'pessoas', 'fins_de_semana', 'eventos', 'despesas', 'festa_atuacoes',
+  'encomendas_fixas', 'patrocinios', 'tarefas', 'produtos', 'categorias_despesa', 'funcoes',
+  'responsabilidades', 'festa_categorias', 'festa_responsaveis']);
+const autor = x => x?.criado_por ? `<div class="autor">Criado por ${esc(x.criado_por)}</div>` : '';
+
 async function guardar(tabela, valores, id, acaoTexto) {
   if (id) {
     const { error } = await sb.from(tabela).update(valores).eq('id', id);
@@ -166,6 +176,7 @@ async function guardar(tabela, valores, id, acaoTexto) {
     await registarAtividade(acaoTexto || 'alterou', tabela, id, { ...porId(tabela, id), ...valores });
     return id;
   }
+  if (COM_AUTOR.has(tabela)) valores = { ...valores, criado_por: utilizadorAtual()?.nome ?? null };
   const { data, error } = await sb.from(tabela).insert(valores).select('id').single();
   if (error) throw error;
   await registarAtividade(acaoTexto || (tabela === 'festa_atuacoes' ? 'adicionou' : 'criou'), tabela, data?.id, valores);
@@ -253,12 +264,7 @@ function vInicio() {
   const sab = iso(sabadoDe(new Date()));
   const fds = fdsPorSabado(sab);
 
-  // despesas por categoria
-  const porCat = D.categorias_despesa.map(c => ({
-    c, total: soma(D.despesas.filter(d => d.categoria_id === c.id), 'preco'),
-  })).filter(x => x.total > 0).sort((a, b) => b.total - a.total);
-  const max = Math.max(1, ...porCat.map(x => x.total));
-  const totalSel = S.dashCat ? soma(D.despesas.filter(d => d.categoria_id === Number(S.dashCat)), 'preco') : totalDesp;
+  const totalPatroc = soma(D.patrocinios.filter(p => p.tipo === 'dinheiro'), 'valor');
 
   const eventos = [...D.eventos].sort((a, b) => b.data.localeCompare(a.data));
   const encSemana = fds ? ocorrencias().filter(o => o.fds.id === fds.id && !o.removida).sort((a, b) => a.data.localeCompare(b.data)) : [];
@@ -278,9 +284,10 @@ function vInicio() {
     <div style="margin-top:8px;font-size:18px">${fds ? chipEquipa(fds.equipa_id) : '<span class="kpi-rotulo">Ainda não definido. Toca para escolher a equipa.</span>'}</div>
   </div>
   <div class="grelha">
-    <div class="cartao"><div class="kpi-rotulo">Fins de semana realizados</div><div class="kpi-valor">${realizados}</div></div>
-    <div class="cartao"><div class="kpi-rotulo">Total de despesas</div><div class="kpi-valor">${eur(totalDesp)}</div></div>
     <div class="cartao largo"><div class="kpi-rotulo">Lucro total (soma dos lucros finais de domingo)</div><div class="kpi-valor pos">${eur(lucro)}</div></div>
+    <div class="cartao"><div class="kpi-rotulo">Total de despesas</div><div class="kpi-valor">${eur(totalDesp)}</div></div>
+    <div class="cartao"><div class="kpi-rotulo">Total de patrocínios</div><div class="kpi-valor">${eur(totalPatroc)}</div></div>
+    <div class="cartao largo kpi-linha"><span class="kpi-rotulo">Fins de semana realizados</span><b>${realizados}</b></div>
   </div>
 
   ${encSemana.length ? `<div class="cartao">
@@ -299,22 +306,14 @@ function vInicio() {
       </div>`).join('')}
   </div>` : ''}
 
-  <div class="cartao">
-    <h3>Despesas por categoria</h3>
-    <select data-filtro="dashCat">${opt('', 'Todas as categorias', S.dashCat)}${D.categorias_despesa.map(c => opt(c.id, c.nome, S.dashCat)).join('')}</select>
-    <div class="total-linha"><span>${S.dashCat ? esc(porId('categorias_despesa', S.dashCat)?.nome) : 'Todas'}</span><b>${eur(totalSel)}</b></div>
-    ${porCat.length ? porCat.map(x => `
-      <div class="barra-linha${String(x.c.id) === String(S.dashCat) ? ' sel' : ''}">
-        <span>${esc(x.c.nome)}</span><div class="barra"><i style="width:${(x.total / max * 100).toFixed(1)}%"></i></div><b>${eur(x.total)}</b>
-      </div>`).join('') : '<div class="vazio">Ainda não há despesas.</div>'}
-  </div>
+  ${cartaoTarefas()}
 
   <div class="cartao">
     <h3>Eventos</h3>
     <p class="dica">O lucro dos eventos é só uma nota; já está incluído no lucro final de domingo.</p>
     ${eventos.length ? `<ul class="lista">${eventos.map(e => `
       <li class="toque" data-acao="editarEvento" data-id="${e.id}">
-        <div class="princ"><b>${esc(e.nome)}</b><div class="sub">${fmtCurta(e.data)} · ${e.num_pessoas ?? '—'} pessoas</div><div class="sub">${chipEquipa(e.equipa_id, e.todas_equipas)}</div></div>
+        <div class="princ"><b>${esc(e.nome)}</b><div class="sub">${fmtCurta(e.data)} · ${e.num_pessoas ?? '—'} pessoas</div><div class="sub">${chipEquipa(e.equipa_id, e.todas_equipas)}</div>${autor(e)}</div>
         <span class="valor">${e.nota_lucro != null ? eur(e.nota_lucro) : ''}</span>
       </li>`).join('')}</ul>` : '<div class="vazio">Ainda não há eventos.</div>'}
   </div>`;
@@ -420,6 +419,7 @@ function abrirFds(sab) {
     <div class="campo"><label>Ementa de domingo</label><textarea name="ementa_domingo" placeholder="Ex.: take-away de…">${esc(fds?.ementa_domingo)}</textarea></div>
     <div class="campo"><label>Lucro final (€)</label><input name="lucro_final" type="text" inputmode="decimal" placeholder="Preenche no domingo" value="${fds?.lucro_final ?? ''}"></div>
     <p class="dica">Dinheiro líquido do fim de semana, já com o dinheiro dos eventos incluído.</p>
+    ${autor(fds)}
     <div class="acoes"><button class="btn primario" type="submit">${fds ? 'Guardar' : 'Criar fim de semana'}</button></div>
   </form>
   ${fds ? `
@@ -459,7 +459,7 @@ function linhaDespesa(d) {
   const c = porId('categorias_despesa', d.categoria_id), p = porId('pessoas', d.pessoa_id);
   return `<li class="toque" data-acao="editarDespesa" data-id="${d.id}">
     <div class="princ"><b>${esc(c?.nome)}</b>${d.descricao ? ` <span class="sub">· ${esc(d.descricao)}</span>` : ''}
-      <div class="sub">${d.data_encomenda ? fmtCurta(d.data_encomenda) : 'Sem data'} · ${esc(p?.nome || 'Sem responsável')}</div></div>
+      <div class="sub">${d.data_encomenda ? fmtCurta(d.data_encomenda) : 'Sem data'} · ${esc(p?.nome || 'Sem responsável')}</div>${autor(d)}</div>
     <span class="valor">${eur(d.preco)}</span></li>`;
 }
 
@@ -507,6 +507,7 @@ function abrirDespesa(id, fdsId, voltaSab, pre = {}) {
     <div class="campo"><label>Preço (€)</label><input name="preco" type="text" inputmode="decimal" required placeholder="0,00" value="${d?.preco ?? ''}"></div>
     <div class="campo"><label>Descrição (opcional)</label><input name="descricao" type="text" placeholder="Ex.: 40 frangos" value="${esc(d?.descricao ?? pre.descricao)}"></div>
     <div class="campo"><label>Fim de semana</label><select name="fim_de_semana_id">${optsFds(fdsInicial, '— Sem fim de semana (ex.: renda) —')}</select></div>
+    ${autor(d)}
     <div class="acoes">
       ${d ? '<button class="btn perigo" type="button" id="apagar-desp">Apagar</button>' : ''}
       <button class="btn primario" type="submit">Guardar</button>
@@ -560,6 +561,7 @@ function abrirEvento(id, data) {
     <div class="campo"><label>Lucro (só nota, €)</label><input name="nota_lucro" type="text" inputmode="decimal" value="${e?.nota_lucro ?? ''}"></div>
     <p class="dica">Este valor não entra no lucro total: o dinheiro é contado no lucro final de domingo.</p>
     <div class="campo"><label>Notas</label><textarea name="notas">${esc(e?.notas)}</textarea></div>
+    ${autor(e)}
     <div class="acoes">
       ${e ? '<button class="btn perigo" type="button" id="apagar-ev">Apagar</button>' : ''}
       <button class="btn primario" type="submit">Guardar</button>
@@ -804,6 +806,7 @@ function abrirFixa(id) {
     <div class="campo"><label>Notas</label><textarea name="notas" placeholder="Ex.: fornecedor, contacto…">${esc(f?.notas)}</textarea></div>
     ${f ? `<label class="campo-check"><input type="checkbox" name="ativa" ${f.ativa ? 'checked' : ''}> Ativa (aparece no calendário)</label>` : ''}
     <p class="dica">Aparece como lembrete no calendário em todas as semanas que têm fim de semana registado. Em cada semana podes mudar o dia, as quantidades ou removê-la.</p>
+    ${autor(f)}
     <div class="acoes">
       ${f ? '<button class="btn perigo" type="button" id="apagar-fixa">Apagar</button>' : ''}
       <button class="btn primario" type="submit">Guardar</button>
@@ -874,7 +877,7 @@ function vFesta() {
           <div class="hora">${a.hora_inicio ? `${hhmm(a.hora_inicio)}${a.hora_fim ? `<span>${hhmm(a.hora_fim)}</span>` : ''}` : `<span class="ico">${esc(c?.icone || '•')}</span>`}</div>
           <div class="princ"><b>${a.hora_inicio && c?.icone ? esc(c.icone) + ' ' : ''}${esc(a.artista)}</b>
             <div class="sub">${esc(c?.nome || 'Sem categoria')}${r ? ' · ' + esc(r.nome) : ''}</div>
-            ${a.notas ? `<div class="sub">${esc(a.notas)}</div>` : ''}</div>
+            ${a.notas ? `<div class="sub">${esc(a.notas)}</div>` : ''}${autor(a)}</div>
           <span class="valor">${a.preco != null ? eur(a.preco) : ''}</span></li>`;
       }).join('')}</ul></div>`;
   }).join('') : '<div class="vazio">Ainda não há nada registado. Carrega em "+ Adicionar".</div>'}
@@ -906,6 +909,7 @@ function abrirAtuacao(id, catId) {
     <div class="campo"><label>Preço (€)</label><input name="preco" type="text" inputmode="decimal" placeholder="0,00" value="${a?.preco ?? ''}"></div>
     <div class="campo"><label>Responsável</label><select name="responsavel_id">${optsLista('festa_responsaveis', a?.responsavel_id, '— Sem responsável —')}</select></div>
     <div class="campo"><label>Notas</label><textarea name="notas" placeholder="Ex.: contacto, sinal pago, o que inclui…">${esc(a?.notas)}</textarea></div>
+    ${autor(a)}
     <div class="acoes">
       ${a ? '<button class="btn perigo" type="button" id="apagar-at">Apagar</button>' : ''}
       <button class="btn primario" type="submit">Guardar</button>
@@ -942,12 +946,203 @@ function abrirAtuacao(id, catId) {
 }
 
 /* =========================================================
+   Tarefas (cartão na página principal)
+   ========================================================= */
+const ESTADOS_TAREFA = { por_fazer: 'Por fazer', a_tratar: 'A tratar', feita: 'Feita' };
+const ICONE_TAREFA = { por_fazer: '○', a_tratar: '◐', feita: '✓' };
+
+function cartaoTarefas() {
+  const hoje = hojeIso();
+  const eu = utilizadorAtual();
+  let lista = [...D.tarefas];
+  if (S.tarefasVer === 'feitas') lista = lista.filter(t => t.estado === 'feita')
+    .sort((a, b) => (b.feita_em || '').localeCompare(a.feita_em || ''));
+  else {
+    lista = lista.filter(t => t.estado !== 'feita');
+    if (S.tarefasVer === 'minhas') lista = lista.filter(t => eu?.pessoa_id && t.pessoa_id === eu.pessoa_id);
+    lista.sort((a, b) => (a.dia || '9999').localeCompare(b.dia || '9999') || a.id - b.id);
+  }
+  const abertas = D.tarefas.filter(t => t.estado !== 'feita').length;
+  const pil = (k, t) => `<button class="pilula${S.tarefasVer === k ? ' ativo' : ''}" data-acao="tarefasVer" data-ver="${k}">${t}</button>`;
+  return `<div class="cartao">
+    <div class="cartao-topo"><h3>Tarefas ${abertas ? `<span class="etiqueta pendente">${abertas} por fazer</span>` : ''}</h3>
+      <button class="btn peq primario" data-acao="novaTarefa">+ Tarefa</button></div>
+    <div class="pilulas">${pil('abertas', 'Por fazer')}${eu?.pessoa_id ? pil('minhas', 'As minhas') : ''}${pil('feitas', 'Feitas')}</div>
+    ${lista.length ? `<ul class="lista">${lista.map(t => {
+      const p = porId('pessoas', t.pessoa_id);
+      const atrasada = t.estado !== 'feita' && t.dia && t.dia < hoje;
+      return `<li class="toque tarefa ${t.estado}" data-acao="editarTarefa" data-id="${t.id}">
+        <span class="estado-ponto t-${t.estado}">${ICONE_TAREFA[t.estado]}</span>
+        <div class="princ"><b>${esc(t.nome)}</b>
+          ${t.descricao ? `<div class="sub desc">${esc(t.descricao)}</div>` : ''}
+          <div class="sub">${esc(p?.nome || 'Sem responsável')}${t.dia ? ` · <span class="${atrasada ? 'atrasada' : ''}">${atrasada ? 'Atrasada · ' : ''}${fmtCurta(t.dia)}</span>` : ''} · ${ESTADOS_TAREFA[t.estado]}</div>
+          ${t.estado === 'feita' && t.feita_por ? `<div class="autor">Feita por ${esc(t.feita_por)}</div>` : autor(t)}</div>
+        <span class="sub">›</span></li>`;
+    }).join('')}</ul>` : `<div class="vazio">${S.tarefasVer === 'feitas' ? 'Ainda não há tarefas feitas.' : 'Não há tarefas por fazer. 🎉'}</div>`}
+  </div>`;
+}
+
+function abrirTarefa(id) {
+  const t = id ? porId('tarefas', id) : null;
+  const estado = t?.estado ?? 'por_fazer';
+  const html = `
+  <form id="f-tar">
+    <div class="campo"><label>Nome</label><input name="nome" required placeholder="Ex.: Pedir licença à Câmara" value="${esc(t?.nome)}"></div>
+    <div class="campo"><label>Descrição</label><textarea name="descricao" placeholder="Detalhes, contactos, o que falta…">${esc(t?.descricao)}</textarea></div>
+    <div class="campo"><label>Quem vai tratar</label><select name="pessoa_id">${opt('', '— Ninguém ainda —', t?.pessoa_id ?? '')}${[...D.pessoas].sort((a, b) => a.nome.localeCompare(b.nome, 'pt')).map(p => opt(p.id, p.nome, t?.pessoa_id ?? utilizadorAtual()?.pessoa_id ?? '')).join('')}</select></div>
+    <div class="campo"><label>Dia</label><input name="dia" type="date" value="${t?.dia ?? ''}"></div>
+    <div class="campo"><label>Estado</label>
+      <div class="escolha">${Object.entries(ESTADOS_TAREFA).map(([k, n]) => `
+        <label><input type="radio" name="estado" value="${k}" ${estado === k ? 'checked' : ''}><span>${ICONE_TAREFA[k]} ${n}</span></label>`).join('')}</div></div>
+    ${t?.estado === 'feita' && t.feita_por ? `<div class="autor">Feita por ${esc(t.feita_por)} · ${fmtQuando(t.feita_em)}</div>` : ''}
+    ${autor(t)}
+    <div class="acoes">
+      ${t ? '<button class="btn perigo" type="button" id="apagar-tar">Apagar</button>' : ''}
+      <button class="btn primario" type="submit">Guardar</button>
+    </div>
+  </form>`;
+  abrirSheet(t ? 'Editar tarefa' : 'Nova tarefa', html, el => {
+    const form = $('#f-tar', el);
+    form.onsubmit = ev => {
+      ev.preventDefault();
+      const f = new FormData(form);
+      const novo = f.get('estado');
+      const v = {
+        nome: f.get('nome').trim(),
+        descricao: f.get('descricao').trim() || null,
+        pessoa_id: idOuNull(f.get('pessoa_id')),
+        dia: f.get('dia') || null,
+        estado: novo,
+      };
+      let acaoTexto;
+      if (novo === 'feita' && t?.estado !== 'feita') {
+        v.feita_por = utilizadorAtual()?.nome ?? null; v.feita_em = new Date().toISOString(); acaoTexto = 'marcou como feita';
+      } else if (novo !== 'feita' && t?.estado === 'feita') { v.feita_por = null; v.feita_em = null; }
+      if (t && novo === 'a_tratar' && t.estado !== 'a_tratar') acaoTexto = 'começou a tratar';
+      acao(() => guardar('tarefas', v, t?.id, t ? acaoTexto : undefined), 'Tarefa guardada');
+    };
+    if (t) $('#apagar-tar', el).onclick = () => {
+      if (confirm(`Apagar a tarefa "${t.nome}"?`)) acao(() => apagar('tarefas', t.id), 'Tarefa apagada');
+    };
+  });
+}
+
+/* =========================================================
+   Patrocínios (separador em Listas)
+   ========================================================= */
+const nomeEventoPatroc = p => p.evento_id ? (porId('eventos', p.evento_id)?.nome || 'Evento apagado') : (p.evento_texto || '');
+
+function vPatrocinios() {
+  const todos = D.patrocinios;
+  const totalDinheiro = soma(todos.filter(p => p.tipo === 'dinheiro'), 'valor');
+  const patrocinadores = new Set(todos.map(p => p.nome.trim().toLowerCase())).size;
+  let lista = [...todos];
+  if (S.patTipo) lista = lista.filter(p => p.tipo === S.patTipo);
+  let totalProd = 0;
+  if (S.patProd) {
+    const pid = Number(S.patProd);
+    lista = lista.filter(p => p.tipo === 'generos' && (p.itens || []).some(i => i.produto_id === pid));
+    totalProd = lista.reduce((t, p) => t + p.itens.filter(i => i.produto_id === pid).reduce((s2, i) => s2 + (Number(i.quantidade) || 0), 0), 0);
+  }
+  lista.sort((a, b) => (b.dia || '').localeCompare(a.dia || '') || b.id - a.id);
+  return `
+  <div class="grelha">
+    <div class="cartao"><div class="kpi-rotulo">Total em dinheiro</div><div class="kpi-valor pos">${eur(totalDinheiro)}</div></div>
+    <div class="cartao"><div class="kpi-rotulo">Patrocinadores</div><div class="kpi-valor">${patrocinadores}</div></div>
+  </div>
+  <p class="dica">O dinheiro dos patrocínios fica separado do lucro dos fins de semana. O total junto está em Configuração → Dinheiro total da festa.</p>
+  <div class="filtros">
+    <select data-filtro="patTipo">${opt('', 'Dinheiro e géneros', S.patTipo)}${opt('dinheiro', '💶 Só dinheiro', S.patTipo)}${opt('generos', '🥩 Só géneros', S.patTipo)}</select>
+    <select data-filtro="patProd">${optsLista('produtos', S.patProd, 'Todos os produtos')}</select>
+  </div>
+  ${S.patProd ? `<div class="cartao"><div class="total-linha" style="margin:0"><span>Total de ${esc(nomeProduto(S.patProd))} oferecido</span><b>${fmtNum.format(totalProd)}</b></div>
+    <div class="sub" style="font-size:13px;color:var(--suave)">em ${lista.length} patrocínio(s)</div></div>` : ''}
+  ${lista.length ? `<div class="cartao" style="padding:4px 14px"><ul class="lista">${lista.map(p => `
+    <li class="toque" data-acao="editarPatrocinio" data-id="${p.id}">
+      <span class="estado-ponto">${p.tipo === 'dinheiro' ? '💶' : '🥩'}</span>
+      <div class="princ"><b>${esc(p.nome)}</b>
+        ${p.tipo === 'generos' ? `<div class="sub">${esc(textoItens(p.itens) || 'Géneros')}</div>` : ''}
+        <div class="sub">${[nomeEventoPatroc(p), p.dia ? fmtCurta(p.dia) : ''].filter(Boolean).map(esc).join(' · ') || 'Sem evento'}</div>
+        ${autor(p)}</div>
+      <span class="valor">${p.tipo === 'dinheiro' ? eur(p.valor) : ''}</span></li>`).join('')}</ul></div>`
+    : '<div class="vazio">Ainda não há patrocínios.</div>'}
+  <button class="fab" data-acao="novoPatrocinio">+ Patrocínio</button>`;
+}
+
+function abrirPatrocinio(id) {
+  const p = id ? porId('patrocinios', id) : null;
+  const tipo = p?.tipo ?? 'dinheiro';
+  const eventos = [...D.eventos].sort((a, b) => b.data.localeCompare(a.data));
+  const eventoSel = p ? (p.evento_id ?? (p.evento_texto ? 'outro' : '')) : '';
+  const nomes = [...new Set(D.patrocinios.map(x => x.nome))].sort((a, b) => a.localeCompare(b, 'pt'));
+  const html = `
+  <form id="f-pat">
+    <div class="campo"><label>Quem patrocina</label><input name="nome" required list="nomes-patroc" placeholder="Nome da pessoa ou empresa" value="${esc(p?.nome)}">
+      <datalist id="nomes-patroc">${nomes.map(n => `<option value="${esc(n)}">`).join('')}</datalist></div>
+    <div class="campo"><label>Tipo</label>
+      <div class="escolha">
+        <label><input type="radio" name="tipo" value="dinheiro" ${tipo === 'dinheiro' ? 'checked' : ''}><span>💶 Dinheiro</span></label>
+        <label><input type="radio" name="tipo" value="generos" ${tipo === 'generos' ? 'checked' : ''}><span>🥩 Géneros</span></label>
+      </div></div>
+    <div id="bloco-dinheiro" ${tipo === 'dinheiro' ? '' : 'hidden'}>
+      <div class="campo"><label>Valor (€)</label><input name="valor" type="text" inputmode="decimal" placeholder="0,00" value="${p?.valor ?? ''}"></div>
+    </div>
+    <div id="bloco-generos" ${tipo === 'generos' ? '' : 'hidden'}>
+      <div class="campo"><label>O que deu</label></div>
+      ${htmlItens(p?.itens, '')}
+    </div>
+    <div class="campo"><label>Evento patrocinado</label>
+      <select name="evento">${opt('', '— Nenhum —', eventoSel)}${eventos.map(e => opt(e.id, `${e.nome} · ${fmtCurta(e.data)}`, eventoSel)).join('')}${opt('outro', '✏️ Outro evento (escrever)', eventoSel)}</select></div>
+    <div class="campo" id="bloco-evento-texto" ${eventoSel === 'outro' ? '' : 'hidden'}>
+      <input name="evento_texto" placeholder="Nome do evento" value="${esc(p?.evento_texto)}">
+      <p class="dica" style="margin:6px 0 0">Fica só no patrocínio: não aparece no calendário nem nos eventos.</p></div>
+    <div class="campo"><label>Dia</label><input name="dia" type="date" value="${p?.dia ?? hojeIso()}"></div>
+    ${autor(p)}
+    <div class="acoes">
+      ${p ? '<button class="btn perigo" type="button" id="apagar-pat">Apagar</button>' : ''}
+      <button class="btn primario" type="submit">Guardar</button>
+    </div>
+  </form>`;
+  abrirSheet(p ? 'Editar patrocínio' : 'Novo patrocínio', html, el => {
+    const form = $('#f-pat', el);
+    montarItens(form, () => '');
+    form.querySelectorAll('input[name=tipo]').forEach(r => r.onchange = () => {
+      const t = form.querySelector('input[name=tipo]:checked').value;
+      $('#bloco-dinheiro', el).hidden = t !== 'dinheiro';
+      $('#bloco-generos', el).hidden = t !== 'generos';
+    });
+    form.evento.onchange = () => { $('#bloco-evento-texto', el).hidden = form.evento.value !== 'outro'; };
+    form.onsubmit = ev => {
+      ev.preventDefault();
+      const t = form.querySelector('input[name=tipo]:checked').value;
+      const v = { nome: form.nome.value.trim(), tipo: t, dia: form.dia.value || null, evento_id: null, evento_texto: null };
+      if (form.evento.value === 'outro') {
+        v.evento_texto = form.evento_texto.value.trim() || null;
+        if (!v.evento_texto) return toast('Escreve o nome do evento.', true);
+      } else v.evento_id = idOuNull(form.evento.value);
+      if (t === 'dinheiro') {
+        const valor = num(form.valor.value);
+        if (valor == null || Number.isNaN(valor) || valor < 0) return toast('Valor inválido.', true);
+        v.valor = valor; v.itens = [];
+      } else {
+        v.itens = lerItens(form); v.valor = null;
+        if (!v.itens.length) return toast('Escolhe pelo menos um produto.', true);
+      }
+      acao(() => guardar('patrocinios', v, p?.id), 'Patrocínio guardado');
+    };
+    if (p) $('#apagar-pat', el).onclick = () => {
+      if (confirm(`Apagar o patrocínio de ${p.nome}?`)) acao(() => apagar('patrocinios', p.id), 'Patrocínio apagado');
+    };
+  });
+}
+
+/* =========================================================
    Vista: Equipas (equipas + pessoas)
    ========================================================= */
 function linhaPessoa(p) {
   const fn = porId('funcoes', p.funcao_id), r = porId('responsabilidades', p.responsabilidade_id);
   return `<li class="toque" data-acao="editarPessoa" data-id="${p.id}">
-    <div class="princ"><b>${esc(p.nome)}</b><div class="sub">${esc(fn?.nome || 'Sem função')} · Resp.: ${esc(r?.nome || 'nenhuma')}</div></div>
+    <div class="princ"><b>${esc(p.nome)}</b><div class="sub">${esc(fn?.nome || 'Sem função')} · Resp.: ${esc(r?.nome || 'nenhuma')}</div>${autor(p)}</div>
     <span class="sub">›</span></li>`;
 }
 
@@ -1004,6 +1199,7 @@ function abrirPessoa(id, equipaId) {
     <div class="campo"><label>Equipa</label><select name="equipa_id">${optsLista('equipas', p?.equipa_id ?? equipaId, '— Sem equipa —')}</select></div>
     <div class="campo"><label>Função</label><select name="funcao_id">${optsLista('funcoes', p?.funcao_id, '— Sem função —')}</select></div>
     <div class="campo"><label>Responsabilidade</label><select name="responsabilidade_id">${optsLista('responsabilidades', p?.responsabilidade_id, 'Nenhuma')}</select></div>
+    ${autor(p)}
     <div class="acoes">
       ${p ? '<button class="btn perigo" type="button" id="apagar-pes">Apagar</button>' : ''}
       <button class="btn primario" type="submit">Guardar</button>
@@ -1045,10 +1241,11 @@ const fmtQuando = iso => {
 };
 
 function vListas() {
-  const secs = [['despesas', 'Despesas'], ['encomendas', 'Encomendas'], ['config', 'Configuração']];
+  const secs = [['despesas', 'Despesas'], ['encomendas', 'Encomendas'], ['patrocinios', 'Patrocínios'], ['config', 'Configuração']];
   return `<div class="segmentos">${secs.map(([k, t]) =>
     `<button class="seg${S.listaSec === k ? ' ativo' : ''}" data-acao="listaSec" data-sec="${k}">${t}</button>`).join('')}</div>`
-    + (S.listaSec === 'despesas' ? vDespesas() : S.listaSec === 'encomendas' ? vEncomendas() : vConfig());
+    + (S.listaSec === 'despesas' ? vDespesas() : S.listaSec === 'encomendas' ? vEncomendas()
+      : S.listaSec === 'patrocinios' ? vPatrocinios() : vConfig());
 }
 
 function vEncomendas() {
@@ -1071,7 +1268,7 @@ function vEncomendas() {
       <li class="toque${f.ativa ? '' : ' inativa'}" data-acao="editarFixa" data-id="${f.id}">
         <div class="princ"><b>${esc(porId('categorias_despesa', f.categoria_id)?.nome)}</b> <span class="sub">· todas as ${DIAS_SEMANA[f.dia_semana - 1].toLowerCase()}s${f.ativa ? '' : ' (desativada)'}</span>
           <div class="sub">${esc(textoItens(f.itens) || 'Sem quantidades')}</div>
-          <div class="sub">${esc(porId('pessoas', f.pessoa_id)?.nome || 'Sem responsável')}</div></div>
+          <div class="sub">${esc(porId('pessoas', f.pessoa_id)?.nome || 'Sem responsável')}</div>${autor(f)}</div>
         <span class="sub">›</span></li>`).join('')}</ul>` : '<div class="vazio">Ainda não há encomendas fixas.</div>'}
     <div class="acoes"><button class="btn bloco peq" data-acao="novaFixa">+ Encomenda fixa</button></div>
   </div>
@@ -1103,12 +1300,7 @@ function vConfig() {
       <ul class="lista">${utilizadores.map(u => `
         <li><div class="princ"><b>${esc(u.nome)}</b>${u.id === eu?.id ? ' <span class="sub">(tu)</span>' : ''}<div class="sub">${esc(u.aparelho || 'Aparelho')} · último acesso ${u.ultimo_acesso ? fmtQuando(u.ultimo_acesso) : '—'}</div></div></li>`).join('')}</ul>
     </div>
-    <div class="cartao">
-      <h3>Atividade recente</h3>
-      ${D.atividade.length ? `<ul class="lista">${D.atividade.map(a => `
-        <li><div class="princ"><b>${esc(a.nome)}</b> ${esc(a.descricao || a.acao)}<div class="sub">${fmtQuando(a.criado_em)}</div></div></li>`).join('')}</ul>`
-        : '<div class="vazio">Ainda não há atividade registada.</div>'}
-    </div>` + Object.entries(LISTAS).map(([t, cfg]) => `
+` + Object.entries(LISTAS).map(([t, cfg]) => `
     <div class="cartao">
       <h3>${cfg.titulo}</h3>
       ${D[t].length ? `<ul class="lista">${(t === 'festa_categorias' ? festaCats() : [...D[t]].sort((a, b) => a.nome.localeCompare(b.nome, 'pt'))).map(x => `
@@ -1120,7 +1312,17 @@ function vConfig() {
             ? `<div class="sub">Total a pagar: ${eur(x.total_a_pagar)}</div>` : ''}</div>
           <span class="sub">›</span></li>`).join('')}</ul>` : '<div class="vazio">Lista vazia.</div>'}
       <div class="acoes"><button class="btn bloco peq" data-acao="novoItem" data-tabela="${t}">+ Adicionar</button></div>
-    </div>`).join('') + `
+    </div>`).join('') + (() => {
+      const lucro = soma(D.fins_de_semana, 'lucro_final');
+      const patroc = soma(D.patrocinios.filter(p => p.tipo === 'dinheiro'), 'valor');
+      return `
+    <div class="cartao">
+      <h3>Dinheiro total da festa</h3>
+      <div class="resumo-linha"><span>Lucro dos fins de semana</span><b>${eur(lucro)}</b></div>
+      <div class="resumo-linha"><span>Patrocínios em dinheiro</span><b>${eur(patroc)}</b></div>
+      <div class="total-linha" style="margin:8px 0 0"><span>Total</span><b class="pos">${eur(lucro + patroc)}</b></div>
+    </div>`;
+    })() + `
     <button class="btn bloco perigo" data-acao="sair" style="margin-top:8px">Terminar sessão</button>`;
 }
 
@@ -1206,6 +1408,11 @@ const ACOES = {
         await guardarEncomenda(o, { removida: true }, 'removeu da semana');
     }, 'Encomendas da semana removidas', () => abrirFds(fds.data_sabado));
   },
+  novaTarefa: () => abrirTarefa(null),
+  editarTarefa: el => abrirTarefa(Number(el.dataset.id)),
+  tarefasVer: el => { S.tarefasVer = el.dataset.ver; render(); },
+  novoPatrocinio: () => abrirPatrocinio(null),
+  editarPatrocinio: el => abrirPatrocinio(Number(el.dataset.id)),
   listaSec: el => { S.listaSec = el.dataset.sec; render(); window.scrollTo(0, 0); },
   novaEquipa: () => abrirEquipa(null),
   editarEquipa: el => abrirEquipa(Number(el.dataset.id)),
