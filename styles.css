@@ -166,3 +166,16 @@ textarea { min-height: 70px; resize: vertical; }
 #carregar { position: fixed; inset: 0; display: grid; place-items: center; background: var(--fundo); z-index: 40; }
 .spinner { width: 34px; height: 34px; border: 3px solid var(--linha); border-top-color: var(--cafe); border-radius: 50%; animation: gira .8s linear infinite; }
 @keyframes gira { to { transform: rotate(360deg); } }
+
+/* contas a pagar */
+.conta { padding: 8px 0; border-bottom: 1px solid var(--linha); }
+.conta:last-child { border-bottom: 0; }
+.conta-topo { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 8px; }
+.conta .falta { color: var(--perigo); font-weight: 700; font-size: 14px; }
+.conta .pago { color: #15803d; font-weight: 700; font-size: 14px; }
+.conta .sub { margin-top: 4px; font-size: 13px; color: var(--suave); }
+
+/* festa */
+.lista .hora { width: 52px; flex: none; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--cafe); font-size: 15px; display: flex; flex-direction: column; }
+.lista .hora span { font-weight: 400; font-size: 12px; color: var(--suave); }
+.nav button { font-size: 10px; }

@@ -42,7 +42,7 @@ const fmtFds = sab => {
    Estado e dados
    ========================================================= */
 const TABELAS = ['equipas', 'funcoes', 'responsabilidades', 'categorias_despesa',
-  'pessoas', 'fins_de_semana', 'eventos', 'despesas'];
+  'pessoas', 'fins_de_semana', 'eventos', 'despesas', 'festa_atuacoes'];
 const D = Object.fromEntries(TABELAS.map(t => [t, []]));
 const S = {
   vista: 'inicio',
@@ -111,12 +111,12 @@ function abrirSheet(titulo, html, montar) {
 }
 function fecharSheet() { $('#sheet-wrap').hidden = true; $('#sheet-corpo').innerHTML = ''; }
 
-const TITULOS = { inicio: 'Início', calendario: 'Calendário', despesas: 'Despesas', equipas: 'Equipas', listas: 'Listas' };
+const TITULOS = { inicio: 'Início', calendario: 'Calendário', despesas: 'Despesas', festa: 'Festa', equipas: 'Equipas', listas: 'Listas' };
 
 function render() {
   $('#titulo').textContent = TITULOS[S.vista];
   document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('ativo', b.dataset.vista === S.vista));
-  const v = { inicio: vInicio, calendario: vCalendario, despesas: vDespesas, equipas: vEquipas, listas: vListas }[S.vista];
+  const v = { inicio: vInicio, calendario: vCalendario, despesas: vDespesas, festa: vFesta, equipas: vEquipas, listas: vListas }[S.vista];
   $('#conteudo').innerHTML = v();
 }
 
@@ -154,6 +154,14 @@ function vInicio() {
 
   const eventos = [...D.eventos].sort((a, b) => b.data.localeCompare(a.data));
 
+  // contas a pagar (categorias com valor total definido, ex.: renda)
+  const contas = D.categorias_despesa.filter(c => c.total_a_pagar != null && Number(c.total_a_pagar) > 0)
+    .map(c => {
+      const total = Number(c.total_a_pagar);
+      const pago = soma(D.despesas.filter(d => d.categoria_id === c.id), 'preco');
+      return { c, total, pago, falta: Math.max(0, total - pago) };
+    });
+
   return `
   <div class="cartao toque" data-acao="abrirFds" data-sab="${sab}">
     <div class="kpi-rotulo">${sab <= hoje || iso(addDias(parse(sab), 1)) === hoje ? 'Este fim de semana' : 'Próximo fim de semana'} · ${fmtFds(sab)}</div>
@@ -164,6 +172,17 @@ function vInicio() {
     <div class="cartao"><div class="kpi-rotulo">Total de despesas</div><div class="kpi-valor">${eur(totalDesp)}</div></div>
     <div class="cartao largo"><div class="kpi-rotulo">Lucro total (soma dos lucros finais de domingo)</div><div class="kpi-valor pos">${eur(lucro)}</div></div>
   </div>
+
+  ${contas.length ? `<div class="cartao">
+    <h3>Contas a pagar</h3>
+    ${contas.map(x => `
+      <div class="conta">
+        <div class="conta-topo"><b>${esc(x.c.nome)}</b>
+          ${x.falta > 0 ? `<span class="falta">Falta pagar ${eur(x.falta)}</span>` : '<span class="pago">Pago ✓</span>'}</div>
+        <div class="barra"><i style="width:${Math.min(100, x.pago / x.total * 100).toFixed(1)}%;background:#15803d"></i></div>
+        <div class="sub">Pago ${eur(x.pago)} de ${eur(x.total)}</div>
+      </div>`).join('')}
+  </div>` : ''}
 
   <div class="cartao">
     <h3>Despesas por categoria</h3>
@@ -340,10 +359,9 @@ function optsResponsavel(catId, sel) {
 
 function abrirDespesa(id, fdsId, voltaSab) {
   const d = id ? porId('despesas', id) : null;
-  if (!D.fins_de_semana.length) return toast('Primeiro cria um fim de semana no calendário.', true);
   if (!D.categorias_despesa.length) return toast('Primeiro cria categorias de despesa em Listas.', true);
   const catInicial = d?.categoria_id ?? D.categorias_despesa[0].id;
-  const fdsInicial = d?.fim_de_semana_id ?? fdsId ?? fdsOrdenados()[0].id;
+  const fdsInicial = d ? (d.fim_de_semana_id ?? '') : (fdsId ?? fdsOrdenados()[0]?.id ?? '');
   const voltar = voltaSab ? () => abrirFds(voltaSab) : null;
   // numa despesa nova, sugere a primeira pessoa responsável pela categoria
   const sugerido = cat => {
@@ -358,7 +376,7 @@ function abrirDespesa(id, fdsId, voltaSab) {
     <div class="campo"><label>Dia da encomenda</label><input name="data_encomenda" type="date" value="${d?.data_encomenda ?? hojeIso()}"></div>
     <div class="campo"><label>Preço (€)</label><input name="preco" type="text" inputmode="decimal" required placeholder="0,00" value="${d?.preco ?? ''}"></div>
     <div class="campo"><label>Descrição (opcional)</label><input name="descricao" type="text" placeholder="Ex.: 40 frangos" value="${esc(d?.descricao)}"></div>
-    <div class="campo"><label>Fim de semana</label><select name="fim_de_semana_id" required>${optsFds(fdsInicial)}</select></div>
+    <div class="campo"><label>Fim de semana</label><select name="fim_de_semana_id">${optsFds(fdsInicial, '— Sem fim de semana (ex.: renda) —')}</select></div>
     <div class="acoes">
       ${d ? '<button class="btn perigo" type="button" id="apagar-desp">Apagar</button>' : ''}
       <button class="btn primario" type="submit">Guardar</button>
@@ -367,9 +385,11 @@ function abrirDespesa(id, fdsId, voltaSab) {
 
   abrirSheet(d ? 'Editar despesa' : 'Nova despesa', html, el => {
     const form = $('#f-desp', el);
+    let escolhidoAMao = !!d;
+    form.pessoa_id.onchange = () => { escolhidoAMao = true; };
     form.categoria_id.onchange = () => {
       const cat = Number(form.categoria_id.value);
-      form.pessoa_id.innerHTML = optsResponsavel(cat, form.pessoa_id.value || sugerido(cat));
+      form.pessoa_id.innerHTML = optsResponsavel(cat, escolhidoAMao ? form.pessoa_id.value : sugerido(cat));
     };
     form.onsubmit = ev => {
       ev.preventDefault();
@@ -382,7 +402,7 @@ function abrirDespesa(id, fdsId, voltaSab) {
         data_encomenda: f.get('data_encomenda') || null,
         preco,
         descricao: f.get('descricao').trim() || null,
-        fim_de_semana_id: Number(f.get('fim_de_semana_id')),
+        fim_de_semana_id: idOuNull(f.get('fim_de_semana_id')),
       };
       acao(() => guardar('despesas', valores, d?.id), 'Despesa guardada', voltar);
     };
@@ -447,6 +467,7 @@ function vDespesas() {
   const grupos = fdsOrdenados()
     .map(f => ({ f, itens: lista.filter(d => d.fim_de_semana_id === f.id) }))
     .filter(g => g.itens.length);
+  const semFds = lista.filter(d => d.fim_de_semana_id == null);
 
   return `
   <div class="filtros">
@@ -459,8 +480,77 @@ function vDespesas() {
   ${grupos.length ? grupos.map(g => `
     <div class="grupo-titulo">${fmtFds(g.f.data_sabado)} · ${eur(soma(g.itens, 'preco'))}</div>
     <div class="cartao" style="padding:4px 14px"><ul class="lista">${g.itens.map(linhaDespesa).join('')}</ul></div>`).join('')
-    : '<div class="vazio">Sem despesas para estes filtros.</div>'}
+    : ''}
+  ${semFds.length ? `
+    <div class="grupo-titulo">Sem fim de semana · ${eur(soma(semFds, 'preco'))}</div>
+    <div class="cartao" style="padding:4px 14px"><ul class="lista">${[...semFds].sort((a, b) => (b.data_encomenda || '').localeCompare(a.data_encomenda || '')).map(linhaDespesa).join('')}</ul></div>` : ''}
+  ${!grupos.length && !semFds.length ? '<div class="vazio">Sem despesas para estes filtros.</div>' : ''}
   <button class="fab" data-acao="novaDespesa" data-fds="${esc(S.despFds)}">+ Despesa</button>`;
+}
+
+/* =========================================================
+   Vista: Festa (cartaz: cantores, horas, preço, notas)
+   ========================================================= */
+const hhmm = t => (t || '').slice(0, 5);
+const fmtDiaFesta = s => { const t = parse(s).toLocaleDateString('pt-PT', { weekday: 'long', day: 'numeric', month: 'long' }); return t.charAt(0).toUpperCase() + t.slice(1); };
+
+function vFesta() {
+  const lista = [...D.festa_atuacoes].sort((a, b) =>
+    a.dia.localeCompare(b.dia) || (a.hora_inicio || '99').localeCompare(b.hora_inicio || '99'));
+  const dias = [...new Set(lista.map(a => a.dia))];
+  return `
+  <div class="cartao"><div class="total-linha" style="margin:0"><span>Total do cartaz</span><b>${eur(soma(lista, 'preco'))}</b></div>
+    <div class="sub" style="font-size:13px;color:var(--suave)">${lista.length} atuação(ões) em ${dias.length} dia(s)</div></div>
+  ${dias.length ? dias.map(dia => {
+    const itens = lista.filter(a => a.dia === dia);
+    return `<div class="grupo-titulo">${fmtDiaFesta(dia)} · ${eur(soma(itens, 'preco'))}</div>
+      <div class="cartao" style="padding:4px 14px"><ul class="lista">${itens.map(a => `
+        <li class="toque" data-acao="editarAtuacao" data-id="${a.id}">
+          <div class="hora">${a.hora_inicio ? hhmm(a.hora_inicio) : '--:--'}${a.hora_fim ? `<span>${hhmm(a.hora_fim)}</span>` : ''}</div>
+          <div class="princ"><b>🎤 ${esc(a.artista)}</b>${a.notas ? `<div class="sub">${esc(a.notas)}</div>` : ''}</div>
+          <span class="valor">${a.preco != null ? eur(a.preco) : ''}</span></li>`).join('')}</ul></div>`;
+  }).join('') : '<div class="vazio">Ainda não há atuações. Carrega em "+ Atuação" para adicionar o primeiro cantor.</div>'}
+  <button class="fab" data-acao="novaAtuacao">+ Atuação</button>`;
+}
+
+function abrirAtuacao(id) {
+  const a = id ? porId('festa_atuacoes', id) : null;
+  const ultimoDia = [...D.festa_atuacoes].sort((x, y) => y.id - x.id)[0]?.dia || '';
+  const html = `
+  <form id="f-at">
+    <div class="campo"><label>Cantor / artista</label><input name="artista" required placeholder="Ex.: nome do cantor ou banda" value="${esc(a?.artista)}"></div>
+    <div class="campo"><label>Dia</label><input name="dia" type="date" required value="${a?.dia ?? ultimoDia}"></div>
+    <div class="filtros">
+      <div class="campo" style="flex:1"><label>Começa</label><input name="hora_inicio" type="time" value="${hhmm(a?.hora_inicio)}"></div>
+      <div class="campo" style="flex:1"><label>Acaba</label><input name="hora_fim" type="time" value="${hhmm(a?.hora_fim)}"></div>
+    </div>
+    <div class="campo"><label>Preço (€)</label><input name="preco" type="text" inputmode="decimal" placeholder="0,00" value="${a?.preco ?? ''}"></div>
+    <div class="campo"><label>Notas</label><textarea name="notas" placeholder="Ex.: contacto, som incluído, sinal pago…">${esc(a?.notas)}</textarea></div>
+    <div class="acoes">
+      ${a ? '<button class="btn perigo" type="button" id="apagar-at">Apagar</button>' : ''}
+      <button class="btn primario" type="submit">Guardar</button>
+    </div>
+  </form>`;
+  abrirSheet(a ? 'Editar atuação' : 'Nova atuação', html, el => {
+    const form = $('#f-at', el);
+    form.onsubmit = ev => {
+      ev.preventDefault();
+      const f = new FormData(form);
+      const preco = num(f.get('preco'));
+      if (preco != null && (Number.isNaN(preco) || preco < 0)) return toast('Preço inválido.', true);
+      acao(() => guardar('festa_atuacoes', {
+        artista: f.get('artista').trim(),
+        dia: f.get('dia'),
+        hora_inicio: f.get('hora_inicio') || null,
+        hora_fim: f.get('hora_fim') || null,
+        preco,
+        notas: f.get('notas').trim() || null,
+      }, a?.id), 'Atuação guardada');
+    };
+    if (a) $('#apagar-at', el).onclick = () => {
+      if (confirm(`Apagar a atuação de ${a.artista}?`)) acao(() => apagar('festa_atuacoes', a.id), 'Atuação apagada');
+    };
+  });
 }
 
 /* =========================================================
@@ -565,7 +655,8 @@ function vListas() {
       ${D[t].length ? `<ul class="lista">${[...D[t]].sort((a, b) => a.nome.localeCompare(b.nome, 'pt')).map(x => `
         <li class="toque" data-acao="editarItem" data-tabela="${t}" data-id="${x.id}">
           <div class="princ">${esc(x.nome)}${t === 'categorias_despesa' && x.responsabilidade_id
-            ? `<div class="sub">Responsabilidade: ${esc(porId('responsabilidades', x.responsabilidade_id)?.nome)}</div>` : ''}</div>
+            ? `<div class="sub">Responsabilidade: ${esc(porId('responsabilidades', x.responsabilidade_id)?.nome)}</div>` : ''}${t === 'categorias_despesa' && x.total_a_pagar != null
+            ? `<div class="sub">Total a pagar: ${eur(x.total_a_pagar)}</div>` : ''}</div>
           <span class="sub">›</span></li>`).join('')}</ul>` : '<div class="vazio">Lista vazia.</div>'}
       <div class="acoes"><button class="btn bloco peq" data-acao="novoItem" data-tabela="${t}">+ Adicionar</button></div>
     </div>`).join('') + `
@@ -580,7 +671,10 @@ function abrirItem(tabela, id) {
     ${tabela === 'categorias_despesa' ? `
       <div class="campo"><label>Responsabilidade ligada (opcional)</label>
         <select name="responsabilidade_id">${optsLista('responsabilidades', x?.responsabilidade_id, 'Nenhuma')}</select></div>
-      <p class="dica">Nas despesas desta categoria, as pessoas com esta responsabilidade aparecem primeiro.</p>` : ''}
+      <p class="dica">Nas despesas desta categoria, as pessoas com esta responsabilidade aparecem primeiro.</p>
+      <div class="campo"><label>Valor total a pagar (opcional, €)</label>
+        <input name="total_a_pagar" type="text" inputmode="decimal" placeholder="Ex.: 1800 para a renda" value="${x?.total_a_pagar ?? ''}"></div>
+      <p class="dica">Se preencheres, a dashboard mostra quanto já foi pago e quanto falta pagar nesta categoria.</p>` : ''}
     <div class="acoes">
       ${x ? '<button class="btn perigo" type="button" id="apagar-item">Apagar</button>' : ''}
       <button class="btn primario" type="submit">Guardar</button>
@@ -591,7 +685,12 @@ function abrirItem(tabela, id) {
     form.onsubmit = ev => {
       ev.preventDefault();
       const v = { nome: form.nome.value.trim() };
-      if (tabela === 'categorias_despesa') v.responsabilidade_id = idOuNull(form.responsabilidade_id.value);
+      if (tabela === 'categorias_despesa') {
+        v.responsabilidade_id = idOuNull(form.responsabilidade_id.value);
+        const t = num(form.total_a_pagar.value);
+        if (t != null && (Number.isNaN(t) || t < 0)) return toast('Valor total inválido.', true);
+        v.total_a_pagar = t;
+      }
       acao(() => guardar(tabela, v, x?.id), 'Guardado');
     };
     if (x) $('#apagar-item', el).onclick = () => {
@@ -618,6 +717,8 @@ const ACOES = {
     const voltaSab = el.closest('#sheet-corpo') ? fdsDaDespesa(Number(el.dataset.id)) : null;
     abrirDespesa(Number(el.dataset.id), null, voltaSab);
   },
+  novaAtuacao: () => abrirAtuacao(null),
+  editarAtuacao: el => abrirAtuacao(Number(el.dataset.id)),
   novaEquipa: () => abrirEquipa(null),
   editarEquipa: el => abrirEquipa(Number(el.dataset.id)),
   novaPessoa: el => abrirPessoa(null, Number(el.dataset.equipa)),
