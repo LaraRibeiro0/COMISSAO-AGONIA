@@ -297,3 +297,8 @@ ul.lista.cartao { list-style: none; }
 .bal-linha > span:nth-child(2) i { position: absolute; left: 0; bottom: -4px; height: 3px; background: #86efac; border-radius: 2px; }
 .bal-linha > span:nth-child(3) { text-align: right; color: var(--suave); }
 .bal-cab > span:nth-child(3) { text-align: right; }
+
+/* aviso de versão nova */
+#nova-versao { position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 10px); z-index: 35; background: var(--cafe); color: #fff; border-radius: 12px; padding: 10px 12px 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.25); max-width: 560px; margin: 0 auto; }
+#nova-versao[hidden] { display: none; }
+#nova-versao button { border: 0; background: #fff; color: var(--cafe); font-weight: 700; border-radius: 8px; padding: 8px 12px; cursor: pointer; }

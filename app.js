@@ -511,7 +511,7 @@ function linhaDespesa(d) {
   const c = porId('categorias_despesa', d.categoria_id), p = porId('pessoas', d.pessoa_id);
   return `<li class="toque" data-acao="editarDespesa" data-id="${d.id}">
     <div class="princ"><b>${esc(c?.nome)}</b>${d.descricao ? ` <span class="sub">· ${esc(d.descricao)}</span>` : ''}
-      <div class="sub">${d.data_encomenda ? fmtCurta(d.data_encomenda) : 'Sem data'} · ${esc(p?.nome || 'Sem responsável')}</div>${autor(d)}</div>
+      ${[d.data_encomenda ? fmtCurta(d.data_encomenda) : '', p?.nome].filter(Boolean).length ? `<div class="sub">${[d.data_encomenda ? fmtCurta(d.data_encomenda) : '', esc(p?.nome || '')].filter(Boolean).join(' · ')}</div>` : ''}${autor(d)}</div>
     <span class="valor">${eur(d.preco)}</span></li>`;
 }
 
@@ -547,18 +547,19 @@ function abrirDespesa(id, fdsId, voltaSab, pre = {}) {
   const d = id ? porId('despesas', id) : null;
   if (!D.categorias_despesa.length) return toast('Primeiro cria categorias de despesa em Listas.', true);
   const catInicial = d?.categoria_id ?? pre.categoria_id ?? D.categorias_despesa[0].id;
-  const fdsInicial = d ? (d.fim_de_semana_id ?? '') : (fdsId ?? fdsOrdenados()[0]?.id ?? '');
+  // por defeito: o fim de semana mais recente que já começou (o "deste fim de semana")
+  const hoje = hojeIso();
+  const fdsRecente = fdsOrdenados().find(f => f.data_sabado <= hoje) ?? [...D.fins_de_semana].sort((a, b) => a.data_sabado.localeCompare(b.data_sabado))[0];
+  const fdsInicial = d ? (d.fim_de_semana_id ?? '') : (fdsId ?? fdsRecente?.id ?? '');
   const voltar = pre.voltar ?? (voltaSab ? () => abrirFds(voltaSab) : null);
   const pessoaInicial = d ? d.pessoa_id : (pre.pessoa_id ?? sugerido(catInicial));
 
   const html = `
   <form id="f-desp">
-    <div class="campo"><label>Categoria</label><select name="categoria_id" required>${optsLista('categorias_despesa', catInicial)}</select></div>
-    <div class="campo"><label>Responsável</label><select name="pessoa_id">${optsResponsavel(catInicial, pessoaInicial)}</select></div>
-    <div class="campo"><label>Dia da encomenda</label><input name="data_encomenda" type="date" value="${d?.data_encomenda ?? pre.data_encomenda ?? hojeIso()}"></div>
-    <div class="campo"><label>Preço (€)</label><input name="preco" type="text" inputmode="decimal" required placeholder="0,00" value="${d?.preco ?? ''}"></div>
-    <div class="campo"><label>Descrição (opcional)</label><input name="descricao" type="text" placeholder="Ex.: 40 frangos" value="${esc(d?.descricao ?? pre.descricao)}"></div>
     <div class="campo"><label>Fim de semana</label><select name="fim_de_semana_id">${optsFds(fdsInicial, '— Sem fim de semana (ex.: renda) —')}</select></div>
+    <div class="campo"><label>Categoria</label><select name="categoria_id" required>${optsLista('categorias_despesa', catInicial)}</select></div>
+    <div class="campo"><label>Nota</label><input name="descricao" type="text" placeholder="Ex.: 40 frangos" value="${esc(d?.descricao ?? pre.descricao)}"></div>
+    <div class="campo"><label>Preço (€)</label><input name="preco" type="text" inputmode="decimal" required placeholder="0,00" value="${d?.preco ?? ''}"></div>
     ${autor(d)}
     <div class="acoes">
       ${d ? '<button class="btn perigo" type="button" id="apagar-desp">Apagar</button>' : ''}
@@ -568,12 +569,6 @@ function abrirDespesa(id, fdsId, voltaSab, pre = {}) {
 
   abrirSheet(d ? 'Editar despesa' : 'Nova despesa', html, el => {
     const form = $('#f-desp', el);
-    let escolhidoAMao = !!d || pre.pessoa_id != null;
-    form.pessoa_id.onchange = () => { escolhidoAMao = true; };
-    form.categoria_id.onchange = () => {
-      const cat = Number(form.categoria_id.value);
-      form.pessoa_id.innerHTML = optsResponsavel(cat, escolhidoAMao ? form.pessoa_id.value : sugerido(cat));
-    };
     form.onsubmit = ev => {
       ev.preventDefault();
       const f = new FormData(form);
@@ -581,8 +576,10 @@ function abrirDespesa(id, fdsId, voltaSab, pre = {}) {
       if (preco == null || Number.isNaN(preco) || preco < 0) return toast('Preço inválido.', true);
       const valores = {
         categoria_id: Number(f.get('categoria_id')),
-        pessoa_id: idOuNull(f.get('pessoa_id')),
-        data_encomenda: f.get('data_encomenda') || null,
+        // responsável e dia não aparecem no formulário: mantêm-se os que já existiam
+        // (ou os que vêm de uma encomenda)
+        pessoa_id: d ? d.pessoa_id : (pre.pessoa_id ?? null),
+        data_encomenda: d ? d.data_encomenda : (pre.data_encomenda ?? hojeIso()),
         preco,
         descricao: f.get('descricao').trim() || null,
         fim_de_semana_id: idOuNull(f.get('fim_de_semana_id')),
@@ -893,24 +890,8 @@ function vDespesas() {
     .map(f => ({ f, itens: lista.filter(d => d.fim_de_semana_id === f.id) }))
     .filter(g => g.itens.length);
   const semFds = lista.filter(d => d.fim_de_semana_id == null);
-  const hoje = hojeIso();
-  const feitos = fdsOrdenados().filter(f => f.data_sabado <= hoje);
-  const maxLucro = Math.max(1, ...feitos.map(f => Number(f.lucro_final) || 0));
 
   return `
-  ${feitos.length ? `<div class="cartao">
-    <h3>Balanço por fim de semana</h3>
-    <div class="bal-cab"><span>Fim de semana</span><span>Lucro</span><span>Despesas</span></div>
-    ${feitos.slice(0, S.balancoTodos ? 999 : 6).map(f => {
-      const d = soma(D.despesas.filter(x => x.fim_de_semana_id === f.id), 'preco');
-      const e = equipa(f.equipa_id);
-      return `<div class="bal-linha toque" data-acao="abrirFds" data-sab="${f.data_sabado}">
-        <span><span class="ponto" style="--c:${esc(e?.cor || '#ccc')};display:inline-block;width:9px;height:9px"></span> ${fmtFds(f.data_sabado).replace(/ \d{4}$/, '')}</span>
-        <span class="pos">${f.lucro_final != null ? eur(f.lucro_final) : '—'}<i style="width:${((Number(f.lucro_final) || 0) / maxLucro * 100).toFixed(0)}%"></i></span>
-        <span>${d ? eur(d) : '—'}</span></div>`;
-    }).join('')}
-    ${feitos.length > 6 ? `<button class="btn bloco peq" data-acao="balancoTodos" style="margin-top:8px">${S.balancoTodos ? 'Ver menos ▴' : `Ver todos (${feitos.length}) ▾`}</button>` : ''}
-  </div>` : ''}
   <div class="filtros">
     <select data-filtro="despFds">${optsFds(S.despFds, 'Todos os fins de semana')}</select>
   </div>
@@ -2371,4 +2352,19 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('pageshow', () => atualizar());
 setInterval(() => { if (document.visibilityState === 'visible') atualizar(); }, 30000);
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+// Aviso "Há uma versão nova": quando o GitHub publica ficheiros novos, o service worker
+// novo instala-se e mostramos um botão para recarregar a app.
+if ('serviceWorker' in navigator) {
+  const temControlador = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    reg.addEventListener('updatefound', () => {
+      const novo = reg.installing;
+      novo?.addEventListener('statechange', () => {
+        if (novo.state === 'activated' && temControlador) $('#nova-versao').hidden = false;
+      });
+    });
+    // volta a verificar sempre que a app volta a ficar visível
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
+}
+$('#nova-versao button').addEventListener('click', () => window.location.reload());
