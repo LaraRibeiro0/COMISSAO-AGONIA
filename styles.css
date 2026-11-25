@@ -302,3 +302,12 @@ ul.lista.cartao { list-style: none; }
 #nova-versao { position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 10px); z-index: 35; background: var(--cafe); color: #fff; border-radius: 12px; padding: 10px 12px 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.25); max-width: 560px; margin: 0 auto; }
 #nova-versao[hidden] { display: none; }
 #nova-versao button { border: 0; background: #fff; color: var(--cafe); font-weight: 700; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+
+/* cartaz */
+.visto-cartaz { background: #fff; border: 1px solid var(--linha); border-radius: 10px; padding: 10px 12px; }
+li.prog { gap: 10px; }
+li.prog.fora .princ, li.prog.fora .prog-hora { opacity: .45; }
+.prog-hora { width: 48px; flex: none; font-variant-numeric: tabular-nums; color: var(--cafe); }
+.visto { width: 28px; height: 28px; flex: none; border-radius: 7px; border: 2px solid #b9aa95; background: #fff; color: #fff; font-weight: 700; font-size: 16px; cursor: pointer; padding: 0; }
+.visto.sim { background: var(--cafe); border-color: var(--cafe); }
+.cartaz-img { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--linha); display: block; margin-bottom: 8px; }

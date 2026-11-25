@@ -1,5 +1,5 @@
 // Service worker: rede primeiro (para receber sempre a versão nova), cache só quando não há rede
-const CACHE = 'comissao-v10';
+const CACHE = 'comissao-v11';
 const BASE = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'logo.png',
   'manifest.json', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 

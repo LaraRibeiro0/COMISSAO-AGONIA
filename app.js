@@ -45,7 +45,7 @@ const TABELAS = ['equipas', 'funcoes', 'responsabilidades', 'categorias_despesa'
   'pessoas', 'fins_de_semana', 'eventos', 'despesas', 'festa_atuacoes', 'utilizadores',
   'produtos', 'encomendas_fixas', 'encomendas', 'festa_categorias', 'festa_responsaveis',
   'patrocinios', 'tarefas', 'patrocinadores', 'santos', 'andores', 'figurados', 'procissao_outros',
-  'evento_assuntos', 'reunioes', 'reuniao_pontos'];
+  'evento_assuntos', 'reunioes', 'reuniao_pontos', 'cartazes'];
 const D = Object.fromEntries(TABELAS.map(t => [t, []]));
 D.atividade = [];
 D.config = {};
@@ -159,7 +159,7 @@ const NOMES_TABELA = {
   festa_categorias: 'a categoria da festa', festa_responsaveis: 'o responsável da festa',
   patrocinios: 'o patrocínio', tarefas: 'a tarefa', patrocinadores: 'o patrocinador', santos: 'o santo',
   andores: 'o andor', figurados: 'o figurado', procissao_outros: 'na procissão',
-  evento_assuntos: 'o assunto', reunioes: 'a reunião', reuniao_pontos: 'o assunto da reunião',
+  evento_assuntos: 'o assunto', reunioes: 'a reunião', reuniao_pontos: 'o assunto da reunião', cartazes: 'o cartaz',
 };
 function descrever(tabela, v) {
   if (!v) return '';
@@ -190,7 +190,7 @@ async function registarAtividade(acao, tabela, registoId, obj) {
 const COM_AUTOR = new Set(['equipas', 'pessoas', 'fins_de_semana', 'eventos', 'despesas', 'festa_atuacoes',
   'encomendas_fixas', 'patrocinios', 'tarefas', 'produtos', 'categorias_despesa', 'funcoes',
   'responsabilidades', 'festa_categorias', 'festa_responsaveis', 'patrocinadores', 'santos', 'andores',
-  'figurados', 'procissao_outros', 'evento_assuntos', 'reunioes', 'reuniao_pontos']);
+  'figurados', 'procissao_outros', 'evento_assuntos', 'reunioes', 'reuniao_pontos', 'cartazes']);
 const autor = x => x?.criado_por ? `<div class="autor">Criado por ${esc(x.criado_por)}</div>` : '';
 
 async function guardar(tabela, valores, id, acaoTexto) {
@@ -1141,15 +1141,14 @@ const precoFigurado = () => cfgNum('preco_figurado', 10);
 function totaisProcissao() {
   const andores = soma(D.andores.filter(a => !a.por_familia), 'preco');
   const figurados = D.figurados.length * precoFigurado();
-  const outros = soma(D.procissao_outros, 'preco');
-  return { andores, figurados, outros, total: andores + figurados + outros };
+  return { andores, figurados, outros: 0, total: andores + figurados };
 }
 
 function vFesta() {
-  const secs = [['festa', '🎉 Festa'], ['procissao', '✝️ Procissão']];
+  const secs = [['festa', '🎉 Festa'], ['procissao', '✝️ Procissão'], ['cartaz', '🖼️ Cartaz']];
   return `<div class="segmentos">${secs.map(([k, t]) =>
     `<button class="seg${S.festaSec === k ? ' ativo' : ''}" data-acao="festaSec" data-sec="${k}">${t}</button>`).join('')}</div>`
-    + (S.festaSec === 'procissao' ? vProcissao() : vFestaCartaz());
+    + (S.festaSec === 'procissao' ? vProcissao() : S.festaSec === 'cartaz' ? vCartaz() : vFestaCartaz());
 }
 
 function linhaFesta(a) {
@@ -1157,7 +1156,7 @@ function linhaFesta(a) {
   return `<li class="toque" data-acao="editarAtuacao" data-id="${a.id}">
     <div class="hora">${a.hora_inicio ? `${hhmm(a.hora_inicio)}${a.hora_fim ? `<span>${hhmm(a.hora_fim)}</span>` : ''}` : `<span class="ico">${esc(c?.icone || '•')}</span>`}</div>
     <div class="princ"><b>${a.hora_inicio && c?.icone ? esc(c.icone) + ' ' : ''}${esc(a.artista)}</b>
-      <div class="sub">${esc(c?.nome || 'Sem categoria')}${variosDias(a) ? ' · ' + fmtIntervalo(a) : ''}${r ? ' · ' + esc(r.nome) : ''}</div>
+      <div class="sub">${esc(c?.nome || 'Sem categoria')}${variosDias(a) ? ' · ' + fmtIntervalo(a) : ''}${r ? ' · ' + esc(r.nome) : ''}${a.no_cartaz ? ' · 🖼️ no cartaz' : ''}</div>
       ${a.notas ? `<div class="sub">${esc(a.notas)}</div>` : ''}${autor(a)}</div>
     <span class="valor">${a.preco != null ? eur(a.preco) : ''}</span></li>`;
 }
@@ -1171,7 +1170,7 @@ function vFestaCartaz() {
   const ordemCat = a => festaCat(a.categoria_id)?.ordem ?? 99;
   lista.sort((a, b) => a.dia.localeCompare(b.dia)
     || ((a.hora_inicio ? 0 : 1) - (b.hora_inicio ? 0 : 1))
-    || (a.hora_inicio || '').localeCompare(b.hora_inicio || '')
+    || chaveHora(a.hora_inicio || '').localeCompare(chaveHora(b.hora_inicio || ''))
     || ordemCat(a) - ordemCat(b));
   const varios = lista.filter(variosDias);
   const umDia = lista.filter(a => !variosDias(a));
@@ -1180,7 +1179,7 @@ function vFestaCartaz() {
   <div class="cartao">
     <div class="total-linha" style="margin:0 0 6px"><span>Total da festa</span><b>${eur(soma(todos, 'preco') + proc.total)}</b></div>
     ${resumo.map(x => `<div class="resumo-linha"><span>${esc(x.c.icone || '')} ${esc(x.c.nome)} <span class="sub">(${x.itens.length})</span></span><b>${eur(soma(x.itens, 'preco'))}</b></div>`).join('')}
-    <div class="resumo-linha toque" data-acao="festaSec" data-sec="procissao"><span>✝️ Procissão <span class="sub">›</span></span><b>${eur(proc.total)}</b></div>
+    <div class="resumo-linha toque" data-acao="festaSec" data-sec="procissao"><span>✝️ Andores e figurados <span class="sub">›</span></span><b>${eur(proc.total)}</b></div>
   </div>
   <div class="pilulas">
     <button class="pilula${!S.festaCat ? ' ativo' : ''}" data-acao="festaCat" data-id="">Tudo</button>
@@ -1210,21 +1209,21 @@ function abrirAtuacao(id, catId) {
   const cat = a?.categoria_id ?? catId ?? festaCats()[0]?.id ?? '';
   const festaIni = cfg('festa_inicio', ''), festaFim = cfg('festa_fim', '');
   const ultimoDia = [...D.festa_atuacoes].sort((x, y) => y.id - x.id)[0]?.dia || festaIni;
-  const comHorario = c => !!festaCat(c)?.tem_horario;
-  const rotuloNome = c => comHorario(c) ? 'Cantor / artista' : 'Descrição';
   const html = `
   <form id="f-at">
     <div class="campo"><label>Categoria</label><select name="categoria_id">${festaCats().map(c => opt(c.id, `${c.icone || ''} ${c.nome}`.trim(), cat)).join('')}</select></div>
-    <div class="campo"><label id="rot-nome">${rotuloNome(cat)}</label><input name="artista" required placeholder="Ex.: nome, empresa ou o que é" value="${esc(a?.artista)}"></div>
+    <div class="campo"><label>Nome / descrição</label><input name="artista" required placeholder="Ex.: Banda X, Fanfarra de Moure, Missa solene" value="${esc(a?.artista)}"></div>
     <div class="filtros">
-      <div class="campo" style="flex:1"><label id="rot-dia">${comHorario(cat) ? 'Dia' : 'Do dia'}</label><input name="dia" type="date" required value="${a?.dia ?? ultimoDia}"></div>
-      <div class="campo" style="flex:1" id="bloco-ate" ${comHorario(cat) ? 'hidden' : ''}><label>Até ao dia</label><input name="dia_fim" type="date" value="${a?.dia_fim ?? ''}"></div>
+      <div class="campo" style="flex:1"><label>Do dia</label><input name="dia" type="date" required value="${a?.dia ?? ultimoDia}"></div>
+      <div class="campo" style="flex:1"><label>Até ao dia (opcional)</label><input name="dia_fim" type="date" value="${a?.dia_fim ?? ''}"></div>
     </div>
-    ${festaIni && festaFim ? `<button type="button" class="btn peq" id="todos-dias" style="margin:-4px 0 12px" ${comHorario(cat) ? 'hidden' : ''}>📅 Todos os dias da festa (${fmtCurta(festaIni)} a ${fmtCurta(festaFim)})</button>` : ''}
-    <div class="filtros" id="horas" ${comHorario(cat) ? '' : 'hidden'}>
-      <div class="campo" style="flex:1"><label>Começa</label><input name="hora_inicio" type="time" value="${hhmm(a?.hora_inicio)}"></div>
-      <div class="campo" style="flex:1"><label>Acaba</label><input name="hora_fim" type="time" value="${hhmm(a?.hora_fim)}"></div>
+    ${festaIni && festaFim ? `<button type="button" class="btn peq" id="todos-dias" style="margin:-4px 0 12px">📅 Todos os dias da festa (${fmtCurta(festaIni)} a ${fmtCurta(festaFim)})</button>` : ''}
+    <div class="filtros">
+      <div class="campo" style="flex:1"><label>Início (opcional)</label><input name="hora_inicio" type="time" value="${hhmm(a?.hora_inicio)}"></div>
+      <div class="campo" style="flex:1"><label>Fim (opcional)</label><input name="hora_fim" type="time" value="${hhmm(a?.hora_fim)}"></div>
     </div>
+    <label class="campo-check visto-cartaz"><input type="checkbox" name="no_cartaz" ${a ? (a.no_cartaz ? 'checked' : '') : ''}> 🖼️ Colocar no cartaz</label>
+    <p class="dica" style="margin-top:-6px">Só entram no cartaz os itens com hora e dentro dos dias da festa.</p>
     <div class="campo"><label>Preço (€)</label><input name="preco" type="text" inputmode="decimal" placeholder="0,00" value="${a?.preco ?? ''}"></div>
     <div class="campo"><label>Responsável</label><select name="responsavel_id">${optsLista('festa_responsaveis', a?.responsavel_id, '— Sem responsável —')}</select></div>
     <div class="campo"><label>Notas</label><textarea name="notas" placeholder="Ex.: contacto, sinal pago, o que inclui…">${esc(a?.notas)}</textarea></div>
@@ -1236,30 +1235,26 @@ function abrirAtuacao(id, catId) {
   </form>`;
   abrirSheet(a ? 'Editar' : `Adicionar · ${festaCat(cat)?.nome || ''}`, html, el => {
     const form = $('#f-at', el);
-    form.categoria_id.onchange = () => {
-      const c = form.categoria_id.value;
-      $('#horas', el).hidden = !comHorario(c);
-      $('#bloco-ate', el).hidden = comHorario(c);
-      if ($('#todos-dias', el)) $('#todos-dias', el).hidden = comHorario(c);
-      $('#rot-nome', el).textContent = rotuloNome(c);
-      $('#rot-dia', el).textContent = comHorario(c) ? 'Dia' : 'Do dia';
-    };
+    // o visto liga-se sozinho quando se põe a hora (se ainda não foi mexido à mão)
+    let vistoMexido = !!a;
+    form.no_cartaz.onchange = () => { vistoMexido = true; };
+    form.hora_inicio.oninput = () => { if (!vistoMexido) form.no_cartaz.checked = !!form.hora_inicio.value; };
     $('#todos-dias', el)?.addEventListener('click', () => { form.dia.value = festaIni; form.dia_fim.value = festaFim; });
     form.onsubmit = ev => {
       ev.preventDefault();
       const f = new FormData(form);
       const preco = num(f.get('preco'));
       if (preco != null && (Number.isNaN(preco) || preco < 0)) return toast('Preço inválido.', true);
-      const comHoras = comHorario(f.get('categoria_id'));
-      const dia = f.get('dia'), diaFim = comHoras ? '' : (f.get('dia_fim') || '');
+      const dia = f.get('dia'), diaFim = f.get('dia_fim') || '';
       if (diaFim && diaFim < dia) return toast('O "até ao dia" tem de ser depois do "do dia".', true);
       acao(() => guardar('festa_atuacoes', {
         categoria_id: idOuNull(f.get('categoria_id')),
         artista: f.get('artista').trim(),
         dia,
         dia_fim: diaFim && diaFim > dia ? diaFim : null,
-        hora_inicio: comHoras ? (f.get('hora_inicio') || null) : null,
-        hora_fim: comHoras ? (f.get('hora_fim') || null) : null,
+        hora_inicio: f.get('hora_inicio') || null,
+        hora_fim: f.get('hora_fim') || null,
+        no_cartaz: form.no_cartaz.checked,
         preco,
         responsavel_id: idOuNull(f.get('responsavel_id')),
         notas: f.get('notas').trim() || null,
@@ -1267,6 +1262,196 @@ function abrirAtuacao(id, catId) {
     };
     if (a) $('#apagar-at', el).onclick = () => {
       if (confirm(`Apagar "${a.artista}"?`)) acao(() => apagar('festa_atuacoes', a.id), 'Apagado');
+    };
+  });
+}
+
+/* =========================================================
+   Cartaz: programa (com visto) e histórico de cartazes gerados
+   ========================================================= */
+const DIAS_LONGOS = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+const FERIADOS_FIXOS = ['01-01', '04-25', '05-01', '06-10', '08-15', '10-05', '11-01', '12-01', '12-08', '12-25'];
+function diasDaFesta() {
+  const ini = cfg('festa_inicio', ''), fim = cfg('festa_fim', '');
+  if (!ini || !fim || fim < ini) return [];
+  const dias = [];
+  for (let d = parse(ini); iso(d) <= fim; d = addDias(d, 1)) dias.push(iso(d));
+  return dias;
+}
+const rotuloDiaCartaz = d => {
+  const x = parse(d);
+  return `${String(x.getDate()).padStart(2, '0')}/${String(x.getMonth() + 1).padStart(2, '0')} - ${DIAS_LONGOS[x.getDay()]}${FERIADOS_FIXOS.includes(d.slice(5)) ? ' (Feriado)' : ''}`;
+};
+// itens com hora que acontecem no dia d (inclui os de vários dias)
+// horas da madrugada (00:00–05:59) contam como o fim da noite desse dia
+const chaveHora = h => (h || '') < '06:00' ? '9' + h : h;
+const itensComHora = d => D.festa_atuacoes
+  .filter(a => a.hora_inicio && d >= a.dia && d <= (a.dia_fim || a.dia))
+  .sort((a, b) => chaveHora(a.hora_inicio).localeCompare(chaveHora(b.hora_inicio)) || a.id - b.id);
+
+function dadosCartaz() {
+  const dias = diasDaFesta();
+  const ini = dias[0], fim = dias[dias.length - 1];
+  const p = parse(ini), q = parse(fim);
+  const mes = q.toLocaleDateString('pt-PT', { month: 'long' }).toUpperCase();
+  const datas = p.getMonth() === q.getMonth() ? `${p.getDate()} A ${q.getDate()} DE ${mes}`
+    : `${p.getDate()} DE ${p.toLocaleDateString('pt-PT', { month: 'long' }).toUpperCase()} A ${q.getDate()} DE ${mes}`;
+  return {
+    ano: String(q.getFullYear()).slice(2),
+    datas,
+    dias: dias.map(d => ({
+      rotulo: rotuloDiaCartaz(d),
+      itens: itensComHora(d).filter(a => a.no_cartaz).map(a => ({ hora: hhmm(a.hora_inicio) + 'h', texto: a.artista })),
+    })).filter(x => x.itens.length),
+  };
+}
+
+function vCartaz() {
+  const dias = diasDaFesta();
+  if (!dias.length) return `<div class="vazio">Define primeiro os dias da festa em Listas → Configuração → Definições.</div>`;
+  const total = dias.reduce((t, d) => t + itensComHora(d).filter(a => a.no_cartaz).length, 0);
+  const hist = [...D.cartazes].sort((a, b) => b.criado_em.localeCompare(a.criado_em));
+  return `
+  <div class="cartao">
+    <div class="cartao-topo" style="margin:0"><h3 style="margin:0">Programa</h3>
+      <span class="sub">${fmtCurta(dias[0])} a ${fmtCurta(dias[dias.length - 1])}</span></div>
+    <p class="dica" style="margin:6px 0 0">Itens da Festa com hora, nos dias da festa. Marca ✓ o que vai para o cartaz.</p>
+  </div>
+  ${dias.map(d => {
+    const itens = itensComHora(d);
+    return `<div class="grupo-titulo">${esc(rotuloDiaCartaz(d))}</div>
+    ${itens.length ? `<div class="cartao" style="padding:4px 14px"><ul class="lista">${itens.map(a => `
+      <li class="prog${a.no_cartaz ? '' : ' fora'}">
+        <button class="visto${a.no_cartaz ? ' sim' : ''}" data-acao="toggleCartaz" data-id="${a.id}" aria-label="Colocar no cartaz">${a.no_cartaz ? '✓' : ''}</button>
+        <b class="prog-hora">${hhmm(a.hora_inicio)}</b>
+        <div class="princ toque" data-acao="editarAtuacao" data-id="${a.id}">${esc(festaCat(a.categoria_id)?.icone || '')} ${esc(a.artista)}</div></li>`).join('')}</ul></div>`
+      : '<div class="vazio" style="padding:8px">Nada com hora neste dia.</div>'}`;
+  }).join('')}
+  <button class="btn primario bloco" data-acao="gerarCartaz" style="margin:14px 0">🖼️ Gerar cartaz (${total} ${total === 1 ? 'item' : 'itens'})</button>
+
+  <h2 class="seccao">Histórico de cartazes</h2>
+  ${hist.length ? `<div class="cartao" style="padding:4px 14px"><ul class="lista">${hist.map(c => `
+    <li class="toque" data-acao="abrirCartaz" data-id="${c.id}">
+      <span class="estado-ponto">🖼️</span>
+      <div class="princ"><b>Cartaz de ${fmtQuando(c.criado_em)}</b>
+        <div class="sub">${(c.dados?.dias || []).reduce((t, d) => t + d.itens.length, 0)} itens · ${esc(c.dados?.datas || '')}</div>${autor(c)}</div>
+      <span class="sub">›</span></li>`).join('')}</ul></div>` : '<div class="vazio">Ainda não foi gerado nenhum cartaz.</div>'}`;
+}
+
+// desenha o cartaz numa imagem (canvas) a partir dos dados guardados
+function desenharCartaz(dados) {
+  const W = 1080, AZUL = '#1E3A6E', CREME = '#F6EEDC', VERMELHO = '#C0392B', VERDE = '#2E7D32';
+  const SERIF = 'Georgia, "Times New Roman", serif';
+  const cv = document.createElement('canvas');
+  const ctx = cv.getContext('2d');
+  const colW = 440, colX = [100, 560], linhaH = 52, cabH = 64, espacoDia = 34;
+  // texto com quebra de linha
+  const quebrar = (txt, larg, fonte) => {
+    ctx.font = fonte;
+    const palavras = String(txt).split(/\s+/), linhas = [];
+    let l = '';
+    for (const p of palavras) { const t = l ? l + ' ' + p : p; if (ctx.measureText(t).width > larg && l) { linhas.push(l); l = p; } else l = t; }
+    if (l) linhas.push(l);
+    return linhas;
+  };
+  const fonteItem = `28px ${SERIF}`;
+  const altDia = dia => cabH + 14 + dia.itens.reduce((t, it) => t + quebrar(it.texto, colW - 120, fonteItem).length * 36 + 16, 0) + espacoDia;
+  // distribuir os dias pelas duas colunas, mantendo a ordem
+  const alturas = dados.dias.map(altDia);
+  const totalAlt = alturas.reduce((a, b) => a + b, 0);
+  let acc = 0, corte = dados.dias.length;
+  for (let i = 0; i < alturas.length; i++) { if (acc + alturas[i] / 2 > totalAlt / 2) { corte = i; break; } acc += alturas[i]; }
+  if (corte === 0 && dados.dias.length > 1) corte = 1;
+  const colunas = [dados.dias.slice(0, corte), dados.dias.slice(corte)];
+  const altCol = colunas.map(c => c.reduce((t, d) => t + altDia(d), 0));
+  const topo = 560, rodape = 240;
+  const H = Math.max(1350, topo + Math.max(...altCol, 200) + rodape + 40);
+  cv.width = W; cv.height = H;
+
+  // fundo e molduras
+  ctx.fillStyle = CREME; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = AZUL; ctx.lineWidth = 18; ctx.strokeRect(9, 9, W - 18, H - 18);
+  ctx.lineWidth = 3; ctx.strokeRect(34, 34, W - 68, H - 68);
+  // bandeirinhas
+  const cores = [VERMELHO, VERDE, CREME, VERMELHO, VERDE];
+  for (let i = 0; i < 16; i++) {
+    const x = 50 + i * 62; ctx.fillStyle = cores[i % cores.length]; ctx.strokeStyle = AZUL; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, 44); ctx.lineTo(x + 56, 44); ctx.lineTo(x + 28, 96); ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // cabeçalho
+  ctx.fillStyle = AZUL; roundRect(ctx, 80, 120, W - 160, 270, 40); ctx.fill();
+  ctx.fillStyle = CREME; ctx.textAlign = 'center';
+  ctx.font = `bold 46px ${SERIF}`; ctx.fillText('FESTAS EM HONRA DO', W / 2, 190);
+  ctx.font = `bold 84px ${SERIF}`; ctx.fillText(`SENHOR D'AGONIA ${dados.ano}'`, W / 2, 290, W - 200);
+  ctx.font = `bold 40px ${SERIF}`; ctx.fillText('MOURE - BARCELOS', W / 2, 358);
+  // datas
+  ctx.fillStyle = AZUL; roundRect(ctx, 230, 420, W - 460, 84, 18); ctx.fill();
+  ctx.fillStyle = CREME; ctx.font = `bold 50px ${SERIF}`; ctx.fillText(dados.datas, W / 2, 479, W - 500);
+  ctx.fillStyle = VERMELHO; [[200, 462], [W - 200, 462]].forEach(([x, y]) => { ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill(); });
+
+  // dias
+  ctx.textAlign = 'left';
+  colunas.forEach((col, ci) => {
+    let y = topo;
+    col.forEach(dia => {
+      ctx.fillStyle = AZUL; roundRect(ctx, colX[ci], y, colW, cabH, 12); ctx.fill();
+      ctx.fillStyle = CREME; ctx.font = `bold 32px ${SERIF}`; ctx.textAlign = 'center';
+      ctx.fillText(dia.rotulo, colX[ci] + colW / 2, y + 43, colW - 30); ctx.textAlign = 'left';
+      y += cabH + 14;
+      dia.itens.forEach(it => {
+        const linhas = quebrar(it.texto, colW - 120, fonteItem);
+        ctx.fillStyle = AZUL; ctx.font = `bold 28px ${SERIF}`; ctx.fillText(it.hora, colX[ci] + 6, y + 30);
+        ctx.font = fonteItem;
+        linhas.forEach((l, k) => ctx.fillText(l, colX[ci] + 112, y + 30 + k * 36));
+        const base = y + 30 + (linhas.length - 1) * 36 + 10;
+        ctx.strokeStyle = '#8FA3C7'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(colX[ci] + 112, base); ctx.lineTo(colX[ci] + colW, base); ctx.stroke();
+        y += linhas.length * 36 + 16;
+      });
+      y += espacoDia;
+    });
+  });
+  if (!dados.dias.length) { ctx.fillStyle = AZUL; ctx.font = `32px ${SERIF}`; ctx.textAlign = 'center'; ctx.fillText('(Programa por anunciar)', W / 2, topo + 80); }
+
+  // rodapé
+  const yR = H - 210;
+  ctx.fillStyle = AZUL; roundRect(ctx, 120, yR, W - 240, 150, 30); ctx.fill();
+  ctx.fillStyle = CREME; ctx.textAlign = 'center';
+  ctx.font = `bold 46px ${SERIF}`; ctx.fillText('VENHA CELEBRAR CONNOSCO!', W / 2, yR + 66);
+  ctx.font = `italic 36px ${SERIF}`; ctx.fillText('Tradição • Fé • Cultura • Alegria', W / 2, yR + 118);
+  return cv;
+}
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+function abrirCartaz(id) {
+  const c = porId('cartazes', id);
+  if (!c) return;
+  const cv = desenharCartaz(c.dados);
+  const nome = `cartaz-senhor-dagonia-${c.criado_em.slice(0, 10)}.png`;
+  abrirSheet(`Cartaz de ${fmtQuando(c.criado_em)}`, `
+    <img class="cartaz-img" alt="Cartaz gerado" src="${cv.toDataURL('image/png')}">
+    ${autor(c)}
+    <div class="acoes">
+      <button class="btn" id="desc-cartaz">⬇️ Descarregar</button>
+      <button class="btn primario" id="part-cartaz">📤 Partilhar</button>
+    </div>
+    <div class="acoes"><button class="btn perigo bloco" id="apagar-cartaz">Remover do histórico</button></div>`, el => {
+    const blob = () => new Promise(r => cv.toBlob(r, 'image/png'));
+    $('#desc-cartaz', el).onclick = async () => {
+      const url = URL.createObjectURL(await blob());
+      const a = document.createElement('a'); a.href = url; a.download = nome; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
+    $('#part-cartaz', el).onclick = async () => {
+      const f = new File([await blob()], nome, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [f] })) {
+        try { await navigator.share({ files: [f], title: "Festas em honra do Senhor d'Agonia" }); } catch {}
+      } else { toast('Este aparelho não permite partilhar diretamente. Usa Descarregar.', true); }
+    };
+    $('#apagar-cartaz', el).onclick = () => {
+      if (confirm('Remover este cartaz do histórico?')) acao(() => apagar('cartazes', c.id), 'Cartaz removido');
     };
   });
 }
@@ -1310,10 +1495,10 @@ function vProcissao() {
   <div class="cartao">
     <div class="resumo-linha" style="border:0"><span>Andores (${D.andores.length})</span><b>${eur(t.andores)}</b></div>
     <div class="resumo-linha"><span>Figurados ${D.figurados.length} × ${eur(preco)}</span><b>${eur(t.figurados)}</b></div>
-    ${D.procissao_outros.length ? `<div class="resumo-linha"><span>Outros (${D.procissao_outros.length})</span><b>${eur(t.outros)}</b></div>` : ''}
     <div class="total-linha" style="margin:8px 0 0"><span>Total da procissão</span><b>${eur(t.total)}</b></div>
   </div>
-  <div class="pilulas">${pil('andores', 'Andores')}${pil('figurados', 'Figurados')}${pil('santos', 'Santos')}${pil('outros', 'Outros')}</div>`;
+  <div class="pilulas">${pil('andores', 'Andores')}${pil('figurados', 'Figurados')}${pil('santos', 'Santos')}</div>
+  <p class="dica">Fanfarras, bandas e o resto da procissão registam-se na Festa (categorias Fanfarras / Bandas e Procissão), com dia e hora.</p>`;
 
   if (S.procSec === 'figurados') {
     const lista = [...D.figurados].sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
@@ -1338,19 +1523,6 @@ function vProcissao() {
         <div class="princ"><b>${esc(x.nome)}</b><div class="sub">${nA} andor(es) · ${nF} figurado(s)</div></div><span class="sub">›</span></li>`;
     }).join('')}</ul></div>` : '<div class="vazio">Ainda não há santos.</div>'}
     <button class="fab" data-acao="novoItem" data-tabela="santos">+ Santo</button>`;
-  }
-
-  if (S.procSec === 'outros') {
-    const lista = [...D.procissao_outros].sort((a, b) => (a.categoria || '').localeCompare(b.categoria || '', 'pt') || a.id - b.id);
-    return topo + `
-    <p class="dica">Para tudo o resto da procissão: banda de música, estandartes, irmandades…</p>
-    ${lista.length ? `<div class="cartao" style="padding:4px 14px"><ul class="lista">${lista.map(o => `
-      <li class="toque" data-acao="editarOutro" data-id="${o.id}">
-        <div class="princ"><b>${esc(o.nome)}</b>
-          <div class="sub">${[o.categoria, o.responsavel].filter(Boolean).map(esc).join(' · ') || 'Sem categoria'}</div>
-          ${o.notas ? `<div class="sub">${esc(o.notas)}</div>` : ''}${autor(o)}</div>
-        <span class="valor">${o.preco != null ? eur(o.preco) : ''}</span></li>`).join('')}</ul></div>` : '<div class="vazio">Ainda não há nada aqui.</div>'}
-    <button class="fab" data-acao="novoOutro">+ Adicionar</button>`;
   }
 
   // andores
@@ -1963,8 +2135,7 @@ function vConfig() {
       <h3>${cfg.titulo}</h3>
       ${D[t].length ? `<ul class="lista">${(t === 'festa_categorias' ? festaCats() : [...D[t]].sort((a, b) => a.nome.localeCompare(b.nome, 'pt'))).map(x => `
         <li class="toque" data-acao="editarItem" data-tabela="${t}" data-id="${x.id}">
-          <div class="princ">${t === 'festa_categorias' ? esc(x.icone || '') + ' ' : ''}${esc(x.nome)}${t === 'festa_categorias'
-            ? `<div class="sub">${x.tem_horario ? 'Com horário' : 'Sem horário'}</div>` : ''}${t === 'produtos' && x.categoria_id
+          <div class="princ">${t === 'festa_categorias' ? esc(x.icone || '') + ' ' : ''}${esc(x.nome)}${t === 'produtos' && x.categoria_id
             ? `<div class="sub">Categoria: ${esc(porId('categorias_despesa', x.categoria_id)?.nome)}</div>` : ''}${t === 'categorias_despesa' && x.responsabilidade_id
             ? `<div class="sub">Responsabilidade: ${esc(porId('responsabilidades', x.responsabilidade_id)?.nome)}</div>` : ''}${t === 'categorias_despesa' && x.total_a_pagar != null
             ? `<div class="sub">Total a pagar: ${eur(x.total_a_pagar)}</div>` : ''}</div>
@@ -2001,8 +2172,7 @@ function abrirItem(tabela, id) {
         <select name="categoria_id">${optsLista('categorias_despesa', x?.categoria_id, 'Nenhuma')}</select></div>
       <p class="dica">Nas encomendas desta categoria, este produto aparece primeiro.</p>` : ''}
     ${tabela === 'festa_categorias' ? `
-      <div class="campo"><label>Ícone (emoji, opcional)</label><input name="icone" maxlength="4" placeholder="Ex.: 🎆" value="${esc(x?.icone)}"></div>
-      <label class="campo-check"><input type="checkbox" name="tem_horario" ${x?.tem_horario ? 'checked' : ''}> Tem horário (hora de início e fim)</label>` : ''}
+      <div class="campo"><label>Ícone (emoji, opcional)</label><input name="icone" maxlength="4" placeholder="Ex.: 🎆" value="${esc(x?.icone)}"></div>` : ''}
     <div class="acoes">
       ${x ? '<button class="btn perigo" type="button" id="apagar-item">Apagar</button>' : ''}
       <button class="btn primario" type="submit">Guardar</button>
@@ -2022,7 +2192,6 @@ function abrirItem(tabela, id) {
       if (tabela === 'produtos') v.categoria_id = idOuNull(form.categoria_id.value);
       if (tabela === 'festa_categorias') {
         v.icone = form.icone.value.trim() || null;
-        v.tem_horario = form.tem_horario.checked;
         if (!x) v.ordem = Math.max(0, ...D.festa_categorias.map(c => c.ordem || 0)) + 1;
       }
       acao(() => guardar(tabela, v, x?.id), 'Guardado');
@@ -2169,6 +2338,20 @@ const ACOES = {
     abrirPatrocinio(Number(el.dataset.id), ev ? { voltar: () => abrirEvento(ev) } : {});
   },
   definicao: el => abrirDefinicao(el.dataset.tipo),
+  toggleCartaz: async el => {
+    const a = porId('festa_atuacoes', el.dataset.id);
+    const novo = !a.no_cartaz;
+    a.no_cartaz = novo; render();
+    const { error } = await sb.from('festa_atuacoes').update({ no_cartaz: novo }).eq('id', a.id);
+    if (error) { a.no_cartaz = !novo; render(); toast(erroLegivel(error), true); }
+  },
+  gerarCartaz: () => {
+    const dados = dadosCartaz();
+    if (!dados.dias.length && !confirm('Não há nenhum item com ✓. Gerar o cartaz vazio na mesma?')) return;
+    let novoId;
+    acao(async () => { novoId = await guardar('cartazes', { titulo: 'Cartaz ' + dados.datas, dados }); }, 'Cartaz gerado', () => abrirCartaz(novoId));
+  },
+  abrirCartaz: el => abrirCartaz(Number(el.dataset.id)),
   festaSec: el => { S.festaSec = el.dataset.sec; render(); window.scrollTo(0, 0); },
   procSec: el => { S.procSec = el.dataset.sec; render(); },
   novoAndor: () => abrirAndor(null),
