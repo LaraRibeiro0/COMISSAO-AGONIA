@@ -1,5 +1,5 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, EMAIL_COMISSAO } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, EMAIL_COMISSAO, EMAIL_ADMIN } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
@@ -44,7 +44,8 @@ const fmtFds = sab => {
 const TABELAS = ['equipas', 'funcoes', 'responsabilidades', 'categorias_despesa',
   'pessoas', 'fins_de_semana', 'eventos', 'despesas', 'festa_atuacoes', 'utilizadores',
   'produtos', 'encomendas_fixas', 'encomendas', 'festa_categorias', 'festa_responsaveis',
-  'patrocinios', 'tarefas', 'patrocinadores', 'santos', 'andores', 'figurados', 'procissao_outros'];
+  'patrocinios', 'tarefas', 'patrocinadores', 'santos', 'andores', 'figurados', 'procissao_outros',
+  'evento_assuntos', 'reunioes', 'reuniao_pontos'];
 const D = Object.fromEntries(TABELAS.map(t => [t, []]));
 D.atividade = [];
 D.config = {};
@@ -67,6 +68,10 @@ const S = {
   festaCat: '',         // filtro da festa
   tarefasVer: 'abertas', // abertas | minhas | feitas
   patTipo: '', patProd: '', // filtros dos patrocínios
+  inicioSec: 'dashboard', // Início: dashboard | eventos | equipas
+  eventosVer: 'proximos', reunioesVer: 'proximas',
+  equipasAbertas: new Set(),
+  admin: false,
   festaSec: 'festa',    // Festa: festa | procissao
   procSec: 'andores',   // Procissão: andores | figurados | santos | outros
 };
@@ -154,6 +159,7 @@ const NOMES_TABELA = {
   festa_categorias: 'a categoria da festa', festa_responsaveis: 'o responsável da festa',
   patrocinios: 'o patrocínio', tarefas: 'a tarefa', patrocinadores: 'o patrocinador', santos: 'o santo',
   andores: 'o andor', figurados: 'o figurado', procissao_outros: 'na procissão',
+  evento_assuntos: 'o assunto', reunioes: 'a reunião', reuniao_pontos: 'o assunto da reunião',
 };
 function descrever(tabela, v) {
   if (!v) return '';
@@ -161,6 +167,8 @@ function descrever(tabela, v) {
   if (tabela === 'fins_de_semana') return fmtFds(v.data_sabado);
   if (tabela === 'festa_atuacoes') return v.artista;
   if (tabela === 'andores') return porId('santos', v.santo_id)?.nome || '';
+  if (tabela === 'reunioes') return v.titulo || '';
+  if (tabela === 'reuniao_pontos') return v.titulo || '';
   if (tabela === 'encomendas') return `${porId('categorias_despesa', v.categoria_id)?.nome || ''} (${v.data ? fmtCurta(v.data) : ''})`;
   if (tabela === 'encomendas_fixas') return `${porId('categorias_despesa', v.categoria_id)?.nome || ''}, às ${(DIAS_SEMANA[v.dia_semana - 1] || '').toLowerCase()}s`;
   return v.nome || '';
@@ -182,7 +190,7 @@ async function registarAtividade(acao, tabela, registoId, obj) {
 const COM_AUTOR = new Set(['equipas', 'pessoas', 'fins_de_semana', 'eventos', 'despesas', 'festa_atuacoes',
   'encomendas_fixas', 'patrocinios', 'tarefas', 'produtos', 'categorias_despesa', 'funcoes',
   'responsabilidades', 'festa_categorias', 'festa_responsaveis', 'patrocinadores', 'santos', 'andores',
-  'figurados', 'procissao_outros']);
+  'figurados', 'procissao_outros', 'evento_assuntos', 'reunioes', 'reuniao_pontos']);
 const autor = x => x?.criado_por ? `<div class="autor">Criado por ${esc(x.criado_por)}</div>` : '';
 
 async function guardar(tabela, valores, id, acaoTexto) {
@@ -200,12 +208,14 @@ async function guardar(tabela, valores, id, acaoTexto) {
 }
 async function apagar(tabela, id) {
   const antes = porId(tabela, id);
-  const { error } = await sb.from(tabela).delete().eq('id', id);
+  const { data, error } = await sb.from(tabela).delete().eq('id', id).select('id');
   if (error) throw error;
+  if (Array.isArray(data) && data.length === 0) throw { code: 'SO_ADMIN' };
   await registarAtividade('apagou', tabela, id, antes);
 }
 
 function erroLegivel(e) {
+  if (e?.code === 'SO_ADMIN') return 'Só os administradores podem apagar.';
   if (e?.code === '23503') return 'Não é possível apagar: há registos que usam este item.';
   if (e?.code === '23505') return 'Já existe um registo igual (nome ou data repetidos).';
   if (e?.code === '23514') return 'Valor inválido. Confirma os campos.';
@@ -246,12 +256,12 @@ function abrirSheet(titulo, html, montar) {
 }
 function fecharSheet() { $('#sheet-wrap').hidden = true; $('#sheet-corpo').innerHTML = ''; }
 
-const TITULOS = { inicio: 'Início', calendario: 'Calendário', festa: 'Festa', equipas: 'Equipas', listas: 'Listas' };
+const TITULOS = { inicio: 'Início', calendario: 'Calendário', festa: 'Festa', reunioes: 'Reuniões', equipas: 'Equipas', listas: 'Listas' };
 
 function render() {
   $('#titulo').textContent = TITULOS[S.vista];
   document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('ativo', b.dataset.vista === S.vista));
-  const v = { inicio: vInicio, calendario: vCalendario, festa: vFesta, equipas: vEquipas, listas: vListas }[S.vista];
+  const v = { inicio: vInicio, calendario: vCalendario, festa: vFesta, reunioes: vReunioes, equipas: vEquipas, listas: vListas }[S.vista];
   $('#conteudo').innerHTML = v();
 }
 
@@ -273,6 +283,13 @@ function chipEquipa(eqId, todas = false) {
    Vista: Início (dashboard)
    ========================================================= */
 function vInicio() {
+  const secs = [['dashboard', 'Dashboard'], ['eventos', 'Eventos'], ['equipas', 'Equipas']];
+  return `<div class="segmentos">${secs.map(([k, t]) =>
+    `<button class="seg${S.inicioSec === k ? ' ativo' : ''}" data-acao="inicioSec" data-sec="${k}">${t}</button>`).join('')}</div>`
+    + (S.inicioSec === 'eventos' ? vEventos() : S.inicioSec === 'equipas' ? vEquipas() : vDashboard());
+}
+
+function vDashboard() {
   const hoje = hojeIso();
   const realizados = D.fins_de_semana.filter(f => iso(addDias(parse(f.data_sabado), 1)) <= hoje).length;
   const totalDesp = soma(D.despesas, 'preco');
@@ -287,7 +304,6 @@ function vInicio() {
   const pctTxt = new Intl.NumberFormat('pt-PT', { maximumFractionDigits: pct < 10 ? 1 : 0 }).format(pct >= 99.5 && dinheiro < objetivo ? 99 : pct);
   const totalFins = Math.max(0, Math.round(cfgNum('objetivo_fins_semana', 100)));
 
-  const eventos = [...D.eventos].sort((a, b) => b.data.localeCompare(a.data));
   const encSemana = fds ? ocorrencias().filter(o => o.fds.id === fds.id && !o.removida).sort((a, b) => a.data.localeCompare(b.data)) : [];
   const porEncomendar = encSemana.filter(o => !o.encomendada_em).length;
 
@@ -304,6 +320,7 @@ function vInicio() {
     <div class="kpi-rotulo">${sab <= hoje || iso(addDias(parse(sab), 1)) === hoje ? 'Este fim de semana' : 'Próximo fim de semana'} · ${fmtFds(sab)}</div>
     <div style="margin-top:8px;font-size:18px">${fds ? chipEquipa(fds.equipa_id) : '<span class="kpi-rotulo">Ainda não definido. Toca para escolher a equipa.</span>'}</div>
   </div>
+  <button class="link-equipas" data-acao="inicioSec" data-sec="equipas">👥 Ver equipas ›</button>
   <div class="grelha">
     <div class="cartao largo"><div class="kpi-rotulo">Lucro total (soma dos lucros finais de domingo)</div><div class="kpi-valor pos">${eur(lucro)}</div></div>
     <div class="cartao largo toque objetivo" data-acao="definicao" data-tipo="objetivo">
@@ -341,15 +358,7 @@ function vInicio() {
 
   ${cartaoTarefas()}
 
-  <div class="cartao">
-    <h3>Eventos</h3>
-    <p class="dica">O lucro dos eventos é só uma nota; já está incluído no lucro final de domingo.</p>
-    ${eventos.length ? `<ul class="lista">${eventos.map(e => `
-      <li class="toque" data-acao="editarEvento" data-id="${e.id}">
-        <div class="princ"><b>${esc(e.nome)}</b><div class="sub">${fmtCurta(e.data)} · ${e.num_pessoas ?? '—'} pessoas</div><div class="sub">${chipEquipa(e.equipa_id, e.todas_equipas)}</div>${autor(e)}</div>
-        <span class="valor">${e.nota_lucro != null ? eur(e.nota_lucro) : ''}</span>
-      </li>`).join('')}</ul>` : '<div class="vazio">Ainda não há eventos.</div>'}
-  </div>`;
+`;
 }
 
 /* =========================================================
@@ -378,13 +387,15 @@ function vCalendario() {
     const fds = fimSemana ? fdsPorSabado(iso(sabadoDe(dia))) : null;
     const eq = fds && equipa(fds.equipa_id);
     const pintar = eq && visivelEquipa(eq.id);
-    const evs = D.eventos.filter(e => e.data === d && visivelEquipa(e.equipa_id, e.todas_equipas));
+    const evs = D.eventos.filter(e => noEvento(e, d) && visivelEquipa(e.equipa_id, e.todas_equipas));
+    const reus = D.reunioes.filter(r => r.data === d);
     celulas += `
       <div class="dia${dia.getMonth() !== mes ? ' fora' : ''}${d === hoje ? ' hoje' : ''}${pintar ? ' fds' : ''}"
            ${pintar ? `style="--c:${esc(eq.cor)}"` : ''} data-acao="abrirDia" data-data="${d}">
         <span class="num">${dia.getDate()}</span>
         ${pintar ? `<span class="eq">${esc(nomeCurto(eq.nome))}</span>` : ''}
         ${evs.map(e => `<span class="ev${e.todas_equipas ? ' todas' : ''}" style="--c:${esc(equipa(e.equipa_id)?.cor || '#8b5a2b')}">${esc(e.nome)}</span>`).join('')}
+        ${reus.map(r => `<span class="ev reu">🗣️ ${esc(r.titulo)}</span>`).join('')}
         ${encs.filter(o => o.data === d && visivelEquipa(o.fds.equipa_id)).map(o =>
           `<span class="ev enc${o.encomendada_em ? ' ok' : ''}">${o.encomendada_em ? '✓' : '🛒'} ${esc(porId('categorias_despesa', o.categoria_id)?.nome || 'Encomenda')}</span>`).join('')}
       </div>`;
@@ -413,7 +424,8 @@ function vCalendario() {
 
 function abrirDia(d) {
   const dia = parse(d), dow = dia.getDay();
-  const evs = D.eventos.filter(e => e.data === d);
+  const evs = D.eventos.filter(e => noEvento(e, d));
+  const reus = D.reunioes.filter(r => r.data === d);
   let html = '';
   if (dow === 6 || dow === 0) {
     const sab = iso(sabadoDe(dia)), fds = fdsPorSabado(sab);
@@ -428,13 +440,15 @@ function abrirDia(d) {
   }
   const encDia = ocorrencias().filter(o => o.data === d && !o.removida);
   if (encDia.length) html += `<div class="grupo-titulo">Encomendas</div><ul class="lista">${encDia.map(linhaEncomenda).join('')}</ul>`;
+  if (reus.length) html += `<div class="grupo-titulo">Reuniões</div><ul class="lista">${reus.map(r => `
+    <li class="toque" data-acao="abrirReuniao" data-id="${r.id}"><div class="princ"><b>🗣️ ${esc(r.titulo)}</b><div class="sub">${r.hora ? hhmm(r.hora) + ' · ' : ''}${esc(r.local || '')}</div></div><span class="sub">›</span></li>`).join('')}</ul>`;
   html += `<div class="grupo-titulo">Eventos</div>`;
   html += evs.length ? `<ul class="lista">${evs.map(e => `
     <li class="toque" data-acao="editarEvento" data-id="${e.id}">
       <div class="princ"><b>${esc(e.nome)}</b><div class="sub">${chipEquipa(e.equipa_id, e.todas_equipas)}</div></div>
       <span class="valor">${e.num_pessoas != null ? e.num_pessoas + ' pess.' : ''}</span></li>`).join('')}</ul>`
     : '<div class="vazio">Sem eventos neste dia.</div>';
-  html += `<div class="acoes"><button class="btn bloco" data-acao="novoEvento" data-data="${d}">+ Novo evento</button></div>`;
+  html += `<div class="acoes"><button class="btn" data-acao="novoEvento" data-data="${d}">+ Evento</button><button class="btn" data-acao="novaReuniao" data-data="${d}">+ Reunião</button></div>`;
   abrirSheet(fmtLonga(d), html);
 }
 
@@ -456,6 +470,11 @@ function abrirFds(sab) {
     <div class="acoes"><button class="btn primario" type="submit">${fds ? 'Guardar' : 'Criar fim de semana'}</button></div>
   </form>
   ${fds ? `
+    <div class="balanco">
+      <div><span>Lucro final</span><b class="pos">${fds.lucro_final != null ? eur(fds.lucro_final) : '—'}</b></div>
+      <div><span>Despesas</span><b>${eur(soma(desp, 'preco'))}</b></div>
+      <div><span>Encomendas</span><b>${(() => { const o = ocorrencias().filter(x => x.fds.id === fds.id && !x.removida); return `${o.filter(x => x.encomendada_em).length}/${o.length}`; })()}</b></div>
+    </div>
     <div class="grupo-titulo">Despesas deste fim de semana</div>
     <div class="total-linha"><span>Total</span><b>${eur(soma(desp, 'preco'))}</b></div>
     ${desp.length ? `<ul class="lista">${desp.map(linhaDespesa).join('')}</ul>` : '<div class="vazio">Sem despesas.</div>'}
@@ -582,44 +601,282 @@ function abrirDespesa(id, fdsId, voltaSab, pre = {}) {
 /* =========================================================
    Evento (formulário)
    ========================================================= */
+const noEvento = (e, d) => d >= e.data && d <= (e.data_fim || e.data);
+const fmtDatasEvento = e => e.data_fim && e.data_fim > e.data ? `${fmtCurta(e.data)} a ${fmtCurta(e.data_fim)}` : fmtCurta(e.data);
+const ESTADOS_ASSUNTO = { nao_tratado: 'Não tratado', a_tratar: 'A tratar', tratado: 'Tratado' };
+const ICONE_ASSUNTO = { nao_tratado: '○', a_tratar: '◐', tratado: '✓' };
+const CLASSE_ASSUNTO = { nao_tratado: 'por_fazer', a_tratar: 'a_tratar', tratado: 'feita' };
+
+function resumoAssuntos(evId) {
+  const as = D.evento_assuntos.filter(a => a.evento_id === evId);
+  if (!as.length) return '';
+  const nt = as.filter(a => a.estado === 'nao_tratado').length, at = as.filter(a => a.estado === 'a_tratar').length;
+  if (!nt && !at) return '<span class="etiqueta feito">Tudo tratado</span>';
+  return `<span class="etiqueta pendente">${[nt ? nt + ' não tratado' + (nt > 1 ? 's' : '') : '', at ? at + ' a tratar' : ''].filter(Boolean).join(' · ')}</span>`;
+}
+function resumoPatrocEvento(evId) {
+  const ps = D.patrocinios.filter(p => p.evento_id === evId);
+  if (!ps.length) return '';
+  const din = soma(ps.filter(p => p.tipo === 'dinheiro'), 'valor');
+  const nomes = [...new Set(ps.map(p => nomePatrocinador(p)))];
+  return `🤝 ${nomes.length === 1 ? esc(nomes[0]) : nomes.length + ' patrocinadores'}${din ? ' · ' + eur(din) : ''}`;
+}
+
+function vEventos() {
+  const hoje = hojeIso();
+  const prox = S.eventosVer !== 'passados';
+  const lista = D.eventos.filter(e => prox ? (e.data_fim || e.data) >= hoje : (e.data_fim || e.data) < hoje)
+    .sort((a, b) => prox ? a.data.localeCompare(b.data) : b.data.localeCompare(a.data));
+  const pil = (k, t) => `<button class="pilula${S.eventosVer === k ? ' ativo' : ''}" data-acao="eventosVer" data-ver="${k}">${t}</button>`;
+  return `
+  <div class="pilulas">${pil('proximos', 'Próximos')}${pil('passados', 'Passados')}</div>
+  ${lista.length ? lista.map(e => `
+    <div class="cartao toque evento" data-acao="editarEvento" data-id="${e.id}">
+      <div class="cartao-topo" style="margin:0"><b class="ev-nome">${esc(e.nome)}</b><span class="sub">${fmtDatasEvento(e)}</span></div>
+      <div class="sub">👥 ${e.num_pessoas ?? '—'} pessoas · ${chipEquipa(e.equipa_id, e.todas_equipas)}</div>
+      ${e.ementa ? `<div class="sub">🍽️ ${esc(e.ementa)}</div>` : ''}
+      ${resumoPatrocEvento(e.id) ? `<div class="sub">${resumoPatrocEvento(e.id)}</div>` : ''}
+      ${resumoAssuntos(e.id) ? `<div style="margin-top:6px">${resumoAssuntos(e.id)}</div>` : ''}
+      ${autor(e)}
+    </div>`).join('') : `<div class="vazio">${prox ? 'Não há eventos marcados. Carrega em "+ Evento".' : 'Ainda não há eventos passados.'}</div>`}
+  <button class="fab" data-acao="novoEvento" data-data="${hoje}">+ Evento</button>`;
+}
+
 function abrirEvento(id, data) {
   const e = id ? porId('eventos', id) : null;
+  const assuntos = e ? D.evento_assuntos.filter(a => a.evento_id === e.id)
+    .sort((a, b) => ['nao_tratado', 'a_tratar', 'tratado'].indexOf(a.estado) - ['nao_tratado', 'a_tratar', 'tratado'].indexOf(b.estado) || a.id - b.id) : [];
+  const patroc = e ? D.patrocinios.filter(p => p.evento_id === e.id) : [];
   const html = `
   <form id="f-ev">
     <div class="campo"><label>Nome do evento</label><input name="nome" required placeholder="Ex.: Francesinhas" value="${esc(e?.nome)}"></div>
-    <div class="campo"><label>Data</label><input name="data" type="date" required value="${e?.data ?? data ?? hojeIso()}"></div>
+    <div class="filtros">
+      <div class="campo" style="flex:1"><label>Dia</label><input name="data" type="date" required value="${e?.data ?? data ?? hojeIso()}"></div>
+      <div class="campo" style="flex:1"><label>Até ao dia (opcional)</label><input name="data_fim" type="date" value="${e?.data_fim ?? ''}"></div>
+    </div>
+    <div class="campo"><label>Número de pessoas</label><input name="num_pessoas" type="number" min="0" inputmode="numeric" value="${e?.num_pessoas ?? ''}"></div>
     <div class="campo"><label>Equipa principal</label><select name="equipa_id">${optsLista('equipas', e?.equipa_id, '— Nenhuma —')}</select></div>
     <label class="campo-check"><input type="checkbox" name="todas_equipas" ${e?.todas_equipas ? 'checked' : ''}> Todas as equipas ajudam</label>
-    <div class="campo"><label>Número de pessoas</label><input name="num_pessoas" type="number" min="0" inputmode="numeric" value="${e?.num_pessoas ?? ''}"></div>
-    <div class="campo"><label>Lucro (só nota, €)</label><input name="nota_lucro" type="text" inputmode="decimal" value="${e?.nota_lucro ?? ''}"></div>
-    <p class="dica">Este valor não entra no lucro total: o dinheiro é contado no lucro final de domingo.</p>
+    <div class="campo"><label>Ementa</label><textarea name="ementa" placeholder="Ex.: francesinhas, batata frita, sobremesa…">${esc(e?.ementa)}</textarea></div>
     <div class="campo"><label>Notas</label><textarea name="notas">${esc(e?.notas)}</textarea></div>
     ${autor(e)}
     <div class="acoes">
       ${e ? '<button class="btn perigo" type="button" id="apagar-ev">Apagar</button>' : ''}
-      <button class="btn primario" type="submit">Guardar</button>
+      <button class="btn primario" type="submit">${e ? 'Guardar' : 'Criar evento'}</button>
     </div>
-  </form>`;
-  abrirSheet(e ? 'Editar evento' : 'Novo evento', html, el => {
+  </form>
+  ${e ? `
+    <div class="seccao-topo"><h2 class="seccao">Patrocinadores</h2><button class="btn peq" data-acao="patrocinioEvento" data-id="${e.id}">+ Adicionar</button></div>
+    ${patroc.length ? `<ul class="lista cartao" style="padding:4px 14px">${patroc.map(p => `
+      <li class="toque" data-acao="editarPatrocinio" data-id="${p.id}" data-volta-evento="${e.id}">
+        <span class="estado-ponto">${p.tipo === 'dinheiro' ? '💶' : '🥩'}</span>
+        <div class="princ"><b>${esc(nomePatrocinador(p))}</b>${p.tipo === 'generos' ? `<div class="sub">${esc(textoItens(p.itens))}</div>` : ''}</div>
+        <span class="valor">${p.tipo === 'dinheiro' ? eur(p.valor) : ''}</span></li>`).join('')}</ul>` : '<div class="vazio">Sem patrocinadores neste evento.</div>'}
+    <div class="seccao-topo"><h2 class="seccao">Assuntos a resolver</h2><button class="btn peq" data-acao="novoAssunto" data-evento="${e.id}">+ Assunto</button></div>
+    ${assuntos.length ? `<ul class="lista cartao" style="padding:4px 14px">${assuntos.map(a => `
+      <li class="toque tarefa ${CLASSE_ASSUNTO[a.estado]}" data-acao="editarAssunto" data-id="${a.id}">
+        <span class="estado-ponto t-${CLASSE_ASSUNTO[a.estado]}">${ICONE_ASSUNTO[a.estado]}</span>
+        <div class="princ"><b>${esc(a.nome)}</b>
+          ${a.descricao ? `<div class="sub desc">${esc(a.descricao)}</div>` : ''}
+          <div class="sub">${esc(porId('pessoas', a.pessoa_id)?.nome || 'Ninguém ainda')} · ${ESTADOS_ASSUNTO[a.estado]}</div>
+          ${a.estado === 'tratado' && a.tratado_por ? `<div class="autor">Tratado por ${esc(a.tratado_por)}</div>` : ''}</div>
+        <span class="sub">›</span></li>`).join('')}</ul>` : '<div class="vazio">Sem assuntos. Carrega em "+ Assunto".</div>'}` : ''}`;
+  abrirSheet(e ? e.nome : 'Novo evento', html, el => {
     const form = $('#f-ev', el);
     form.onsubmit = ev => {
       ev.preventDefault();
       const f = new FormData(form);
-      const lucro = num(f.get('nota_lucro'));
-      if (lucro != null && Number.isNaN(lucro)) return toast('Lucro inválido.', true);
+      const dataI = f.get('data'), dataF = f.get('data_fim') || '';
+      if (dataF && dataF < dataI) return toast('O "até ao dia" tem de ser depois do dia.', true);
       const valores = {
         nome: f.get('nome').trim(),
-        data: f.get('data'),
+        data: dataI,
+        data_fim: dataF && dataF > dataI ? dataF : null,
+        num_pessoas: f.get('num_pessoas') === '' ? null : parseInt(f.get('num_pessoas'), 10),
         equipa_id: idOuNull(f.get('equipa_id')),
         todas_equipas: f.get('todas_equipas') === 'on',
-        num_pessoas: f.get('num_pessoas') === '' ? null : parseInt(f.get('num_pessoas'), 10),
-        nota_lucro: lucro,
+        ementa: f.get('ementa').trim() || null,
         notas: f.get('notas').trim() || null,
       };
-      acao(() => guardar('eventos', valores, e?.id), 'Evento guardado');
+      let novoId;
+      acao(async () => { novoId = await guardar('eventos', valores, e?.id); }, e ? 'Evento guardado' : 'Evento criado',
+        () => abrirEvento(e?.id ?? novoId));
     };
     if (e) $('#apagar-ev', el).onclick = () => {
-      if (confirm(`Apagar o evento "${e.nome}"?`)) acao(() => apagar('eventos', e.id), 'Evento apagado');
+      if (confirm(`Apagar o evento "${e.nome}"? Os assuntos dele também são apagados.`)) acao(() => apagar('eventos', e.id), 'Evento apagado');
+    };
+  });
+}
+
+function abrirAssunto(id, eventoId) {
+  const a = id ? porId('evento_assuntos', id) : null;
+  const evId = a?.evento_id ?? eventoId;
+  const estado = a?.estado ?? 'nao_tratado';
+  const voltar = () => abrirEvento(evId);
+  const html = `
+  <form id="f-ass">
+    <div class="campo"><label>Assunto</label><input name="nome" required placeholder="Ex.: Comprar castanhas" value="${esc(a?.nome)}"></div>
+    <div class="campo"><label>Descrição</label><textarea name="descricao">${esc(a?.descricao)}</textarea></div>
+    <div class="campo"><label>Quem trata</label><select name="pessoa_id">${opt('', '— Ninguém ainda —', a?.pessoa_id ?? '')}${[...D.pessoas].sort((x, y) => x.nome.localeCompare(y.nome, 'pt')).map(p => opt(p.id, p.nome, a?.pessoa_id ?? '')).join('')}</select></div>
+    <div class="campo"><label>Estado</label>
+      <div class="escolha">${Object.entries(ESTADOS_ASSUNTO).map(([k, n]) => `
+        <label><input type="radio" name="estado" value="${k}" ${estado === k ? 'checked' : ''}><span>${ICONE_ASSUNTO[k]} ${n}</span></label>`).join('')}</div></div>
+    ${a?.estado === 'tratado' && a.tratado_por ? `<div class="autor">Tratado por ${esc(a.tratado_por)} · ${fmtQuando(a.tratado_em)}</div>` : ''}
+    ${autor(a)}
+    <div class="acoes">
+      <button class="btn" type="button" id="voltar-ev">‹ Voltar ao evento</button>
+      ${a ? '<button class="btn perigo" type="button" id="apagar-ass">Apagar</button>' : ''}
+      <button class="btn primario" type="submit">Guardar</button>
+    </div>
+  </form>`;
+  abrirSheet(a ? 'Editar assunto' : `Novo assunto · ${porId('eventos', evId)?.nome || ''}`, html, el => {
+    const form = $('#f-ass', el);
+    $('#voltar-ev', el).onclick = voltar;
+    form.onsubmit = ev => {
+      ev.preventDefault();
+      const novo = form.querySelector('input[name=estado]:checked').value;
+      const v = { evento_id: evId, nome: form.nome.value.trim(), descricao: form.descricao.value.trim() || null, pessoa_id: idOuNull(form.pessoa_id.value), estado: novo };
+      let acaoTexto;
+      if (novo === 'tratado' && a?.estado !== 'tratado') { v.tratado_por = utilizadorAtual()?.nome ?? null; v.tratado_em = new Date().toISOString(); acaoTexto = 'marcou como tratado'; }
+      else if (novo !== 'tratado' && a?.estado === 'tratado') { v.tratado_por = null; v.tratado_em = null; }
+      acao(() => guardar('evento_assuntos', v, a?.id, a ? acaoTexto : undefined), 'Assunto guardado', voltar);
+    };
+    if (a) $('#apagar-ass', el).onclick = () => {
+      if (confirm(`Apagar o assunto "${a.nome}"?`)) acao(() => apagar('evento_assuntos', a.id), 'Assunto apagado', voltar);
+    };
+  });
+}
+
+/* =========================================================
+   Reuniões
+   ========================================================= */
+const ESTADOS_PONTO = { por_falar: 'Por falar', decidido: 'Decidido', adiado: 'Fica para a próxima' };
+const fmtDataReuniao = r => {
+  const t = parse(r.data).toLocaleDateString('pt-PT', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  return t + (r.hora ? ' · ' + hhmm(r.hora) : '');
+};
+
+function vReunioes() {
+  const hoje = hojeIso();
+  const prox = S.reunioesVer !== 'anteriores';
+  const lista = D.reunioes.filter(r => prox ? r.data >= hoje : r.data < hoje)
+    .sort((a, b) => prox ? (a.data + (a.hora || '')).localeCompare(b.data + (b.hora || '')) : (b.data + (b.hora || '')).localeCompare(a.data + (a.hora || '')));
+  const pil = (k, t) => `<button class="pilula${S.reunioesVer === k ? ' ativo' : ''}" data-acao="reunioesVer" data-ver="${k}">${t}</button>`;
+  return `
+  <div class="pilulas">${pil('proximas', 'Próximas')}${pil('anteriores', 'Anteriores')}</div>
+  ${lista.length ? lista.map(r => {
+    const pontos = D.reuniao_pontos.filter(p => p.reuniao_id === r.id);
+    const decididos = pontos.filter(p => p.estado === 'decidido').length;
+    const tarefas = D.tarefas.filter(t => t.reuniao_id === r.id);
+    const abertas = tarefas.filter(t => t.estado !== 'feita').length;
+    const pres = (r.presentes || []).length;
+    return `<div class="cartao toque" data-acao="abrirReuniao" data-id="${r.id}">
+      <div class="cartao-topo" style="margin:0"><b class="ev-nome">🗣️ ${esc(r.titulo)}</b><span class="sub">${fmtDataReuniao(r)}</span></div>
+      <div class="sub">${[r.local, pres ? pres + ' presentes' : (prox ? 'Presenças por marcar' : ''), pontos.length ? (prox ? `${pontos.length} assunto(s) a falar` : `${decididos} decisão(ões)`) : ''].filter(Boolean).map(esc).join(' · ')}</div>
+      ${tarefas.length ? `<div style="margin-top:6px">${abertas ? `<span class="etiqueta pendente">${abertas} tarefa(s) por fazer</span>` : '<span class="etiqueta feito">Tarefas feitas</span>'}</div>` : ''}
+      ${autor(r)}
+    </div>`;
+  }).join('') : `<div class="vazio">${prox ? 'Não há reuniões marcadas.' : 'Ainda não há reuniões anteriores.'}</div>`}
+  <button class="fab" data-acao="novaReuniao" data-data="${hoje}">+ Reunião</button>`;
+}
+
+function abrirReuniao(id, data) {
+  const r = id ? porId('reunioes', id) : null;
+  const pessoas = [...D.pessoas].sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
+  const presentes = new Set((r?.presentes || []).map(Number));
+  const pontos = r ? D.reuniao_pontos.filter(p => p.reuniao_id === r.id).sort((a, b) => (a.ordem ?? 999) - (b.ordem ?? 999) || a.id - b.id) : [];
+  const tarefas = r ? D.tarefas.filter(t => t.reuniao_id === r.id).sort((a, b) => (a.estado === 'feita') - (b.estado === 'feita') || a.id - b.id) : [];
+  const html = `
+  <form id="f-reu">
+    <div class="campo"><label>Título</label><input name="titulo" required placeholder="Ex.: Reunião geral" value="${esc(r?.titulo)}"></div>
+    <div class="filtros">
+      <div class="campo" style="flex:1"><label>Dia</label><input name="data" type="date" required value="${r?.data ?? data ?? hojeIso()}"></div>
+      <div class="campo" style="flex:1"><label>Hora</label><input name="hora" type="time" value="${hhmm(r?.hora) || '21:00'}"></div>
+    </div>
+    <div class="campo"><label>Local</label><input name="local" value="${esc(r?.local ?? 'Salão paroquial')}"></div>
+    ${r ? `<div class="campo"><label>Notas / ata</label><textarea name="notas" placeholder="O que se falou…">${esc(r.notas)}</textarea></div>` : ''}
+    ${autor(r)}
+    <div class="acoes">
+      ${r ? '<button class="btn perigo" type="button" id="apagar-reu">Apagar</button>' : ''}
+      <button class="btn primario" type="submit">${r ? 'Guardar' : 'Criar reunião'}</button>
+    </div>
+  </form>
+  ${r ? `
+    <div class="seccao-topo"><h2 class="seccao">Presentes (${presentes.size} de ${pessoas.length})</h2></div>
+    ${pessoas.length ? `<div class="presencas">${pessoas.map(p => `<button type="button" class="presenca${presentes.has(p.id) ? ' sim' : ''}" data-pessoa="${p.id}">${presentes.has(p.id) ? '✓ ' : ''}${esc(p.nome)}</button>`).join('')}</div>`
+      : '<div class="vazio">Acrescenta primeiro as pessoas em Início → Equipas.</div>'}
+    <div class="seccao-topo"><h2 class="seccao">Assuntos a falar</h2><button class="btn peq" data-acao="novoPonto" data-reuniao="${r.id}">+ Assunto</button></div>
+    ${pontos.length ? `<ul class="lista cartao" style="padding:4px 14px">${pontos.map((p, i) => `
+      <li class="toque" data-acao="editarPonto" data-id="${p.id}">
+        <span class="ordem">${i + 1}.</span>
+        <div class="princ"><b>${esc(p.titulo)}</b>
+          <div class="sub ponto-${p.estado}">${p.estado === 'decidido' ? '⚖️ Decidido: ' + esc(p.decisao || '—') : p.estado === 'adiado' ? '⏳ Fica para a próxima' : 'Por falar'}</div></div>
+        <span class="sub">›</span></li>`).join('')}</ul>` : '<div class="vazio">Ainda sem assuntos.</div>'}
+    <div class="seccao-topo"><h2 class="seccao">Tarefas da reunião</h2><button class="btn peq" data-acao="tarefaReuniao" data-reuniao="${r.id}">+ Tarefa</button></div>
+    ${tarefas.length ? `<ul class="lista cartao" style="padding:4px 14px">${tarefas.map(t => `
+      <li class="toque tarefa ${t.estado}" data-acao="editarTarefa" data-id="${t.id}" data-volta-reuniao="${r.id}">
+        <span class="estado-ponto t-${t.estado}">${ICONE_TAREFA[t.estado]}</span>
+        <div class="princ"><b>${esc(t.nome)}</b><div class="sub">${esc(porId('pessoas', t.pessoa_id)?.nome || 'Sem responsável')}${t.dia ? ' · até ' + fmtCurta(t.dia) : ''} · ${ESTADOS_TAREFA[t.estado]}</div></div>
+        <span class="sub">›</span></li>`).join('')}</ul>
+      <p class="dica">Estas tarefas aparecem também no cartão Tarefas do Dashboard.</p>` : '<div class="vazio">Sem tarefas.</div>'}` : ''}`;
+  abrirSheet(r ? r.titulo : 'Nova reunião', html, el => {
+    const form = $('#f-reu', el);
+    form.onsubmit = ev => {
+      ev.preventDefault();
+      const v = { titulo: form.titulo.value.trim(), data: form.data.value, hora: form.hora.value || null, local: form.local.value.trim() || null };
+      if (r) v.notas = form.notas.value.trim() || null;
+      let novoId;
+      acao(async () => { novoId = await guardar('reunioes', v, r?.id); }, r ? 'Reunião guardada' : 'Reunião criada', () => abrirReuniao(r?.id ?? novoId));
+    };
+    el.querySelectorAll('.presenca').forEach(b => b.onclick = async () => {
+      const pid = Number(b.dataset.pessoa);
+      presentes.has(pid) ? presentes.delete(pid) : presentes.add(pid);
+      b.classList.toggle('sim', presentes.has(pid));
+      b.textContent = (presentes.has(pid) ? '✓ ' : '') + porId('pessoas', pid).nome;
+      const tit = $('.seccao', el); if (tit) tit.textContent = `Presentes (${presentes.size} de ${pessoas.length})`;
+      const { error } = await sb.from('reunioes').update({ presentes: [...presentes] }).eq('id', r.id);
+      if (error) toast(erroLegivel(error), true); else r.presentes = [...presentes];
+    });
+    if (r) $('#apagar-reu', el).onclick = () => {
+      if (confirm(`Apagar a reunião "${r.titulo}"? Os assuntos dela também são apagados (as tarefas ficam).`)) acao(() => apagar('reunioes', r.id), 'Reunião apagada');
+    };
+  });
+}
+
+function abrirPonto(id, reuniaoId) {
+  const p = id ? porId('reuniao_pontos', id) : null;
+  const rId = p?.reuniao_id ?? reuniaoId;
+  const estado = p?.estado ?? 'por_falar';
+  const voltar = () => abrirReuniao(rId);
+  const html = `
+  <form id="f-ponto">
+    <div class="campo"><label>Assunto a falar</label><input name="titulo" required placeholder="Ex.: Preço das castanhas" value="${esc(p?.titulo)}"></div>
+    <div class="campo"><label>Estado</label>
+      <div class="escolha">${Object.entries(ESTADOS_PONTO).map(([k, n]) => `
+        <label><input type="radio" name="estado" value="${k}" ${estado === k ? 'checked' : ''}><span>${n}</span></label>`).join('')}</div></div>
+    <div class="campo" id="bloco-decisao" ${estado === 'decidido' ? '' : 'hidden'}><label>O que ficou decidido</label><textarea name="decisao" placeholder="Ex.: 3 € a dose">${esc(p?.decisao)}</textarea></div>
+    ${autor(p)}
+    <div class="acoes">
+      <button class="btn" type="button" id="voltar-reu">‹ Voltar</button>
+      ${p ? '<button class="btn perigo" type="button" id="apagar-ponto">Apagar</button>' : ''}
+      <button class="btn primario" type="submit">Guardar</button>
+    </div>
+  </form>`;
+  abrirSheet(p ? 'Editar assunto' : 'Novo assunto a falar', html, el => {
+    const form = $('#f-ponto', el);
+    $('#voltar-reu', el).onclick = voltar;
+    form.querySelectorAll('input[name=estado]').forEach(x => x.onchange = () => {
+      $('#bloco-decisao', el).hidden = form.querySelector('input[name=estado]:checked').value !== 'decidido';
+    });
+    form.onsubmit = ev => {
+      ev.preventDefault();
+      const est = form.querySelector('input[name=estado]:checked').value;
+      const v = { reuniao_id: rId, titulo: form.titulo.value.trim(), estado: est, decisao: est === 'decidido' ? (form.decisao.value.trim() || null) : null };
+      if (!p) v.ordem = Math.max(0, ...D.reuniao_pontos.filter(x => x.reuniao_id === rId).map(x => x.ordem || 0)) + 1;
+      acao(() => guardar('reuniao_pontos', v, p?.id), 'Guardado', voltar);
+    };
+    if (p) $('#apagar-ponto', el).onclick = () => {
+      if (confirm(`Apagar "${p.titulo}"?`)) acao(() => apagar('reuniao_pontos', p.id), 'Apagado', voltar);
     };
   });
 }
@@ -636,8 +893,24 @@ function vDespesas() {
     .map(f => ({ f, itens: lista.filter(d => d.fim_de_semana_id === f.id) }))
     .filter(g => g.itens.length);
   const semFds = lista.filter(d => d.fim_de_semana_id == null);
+  const hoje = hojeIso();
+  const feitos = fdsOrdenados().filter(f => f.data_sabado <= hoje);
+  const maxLucro = Math.max(1, ...feitos.map(f => Number(f.lucro_final) || 0));
 
   return `
+  ${feitos.length ? `<div class="cartao">
+    <h3>Balanço por fim de semana</h3>
+    <div class="bal-cab"><span>Fim de semana</span><span>Lucro</span><span>Despesas</span></div>
+    ${feitos.slice(0, S.balancoTodos ? 999 : 6).map(f => {
+      const d = soma(D.despesas.filter(x => x.fim_de_semana_id === f.id), 'preco');
+      const e = equipa(f.equipa_id);
+      return `<div class="bal-linha toque" data-acao="abrirFds" data-sab="${f.data_sabado}">
+        <span><span class="ponto" style="--c:${esc(e?.cor || '#ccc')};display:inline-block;width:9px;height:9px"></span> ${fmtFds(f.data_sabado).replace(/ \d{4}$/, '')}</span>
+        <span class="pos">${f.lucro_final != null ? eur(f.lucro_final) : '—'}<i style="width:${((Number(f.lucro_final) || 0) / maxLucro * 100).toFixed(0)}%"></i></span>
+        <span>${d ? eur(d) : '—'}</span></div>`;
+    }).join('')}
+    ${feitos.length > 6 ? `<button class="btn bloco peq" data-acao="balancoTodos" style="margin-top:8px">${S.balancoTodos ? 'Ver menos ▴' : `Ver todos (${feitos.length}) ▾`}</button>` : ''}
+  </div>` : ''}
   <div class="filtros">
     <select data-filtro="despFds">${optsFds(S.despFds, 'Todos os fins de semana')}</select>
   </div>
@@ -1272,15 +1545,16 @@ function cartaoTarefas() {
         <span class="estado-ponto t-${t.estado}">${ICONE_TAREFA[t.estado]}</span>
         <div class="princ"><b>${esc(t.nome)}</b>
           ${t.descricao ? `<div class="sub desc">${esc(t.descricao)}</div>` : ''}
-          <div class="sub">${esc(p?.nome || 'Sem responsável')}${t.dia ? ` · <span class="${atrasada ? 'atrasada' : ''}">${atrasada ? 'Atrasada · ' : ''}${fmtCurta(t.dia)}</span>` : ''} · ${ESTADOS_TAREFA[t.estado]}</div>
+          <div class="sub">${esc(p?.nome || 'Sem responsável')}${t.dia ? ` · <span class="${atrasada ? 'atrasada' : ''}">${atrasada ? 'Atrasada · ' : ''}${fmtCurta(t.dia)}</span>` : ''} · ${ESTADOS_TAREFA[t.estado]}${t.reuniao_id && porId('reunioes', t.reuniao_id) ? ` · 🗣️ ${fmtCurta(porId('reunioes', t.reuniao_id).data)}` : ''}</div>
           ${t.estado === 'feita' && t.feita_por ? `<div class="autor">Feita por ${esc(t.feita_por)}</div>` : autor(t)}</div>
         <span class="sub">›</span></li>`;
     }).join('')}</ul>` : `<div class="vazio">${S.tarefasVer === 'feitas' ? 'Ainda não há tarefas feitas.' : 'Não há tarefas por fazer. 🎉'}</div>`}
   </div>`;
 }
 
-function abrirTarefa(id) {
+function abrirTarefa(id, reuniaoId, voltar) {
   const t = id ? porId('tarefas', id) : null;
+  const rId = t?.reuniao_id ?? reuniaoId ?? null;
   const estado = t?.estado ?? 'por_fazer';
   const html = `
   <form id="f-tar">
@@ -1291,6 +1565,7 @@ function abrirTarefa(id) {
     <div class="campo"><label>Estado</label>
       <div class="escolha">${Object.entries(ESTADOS_TAREFA).map(([k, n]) => `
         <label><input type="radio" name="estado" value="${k}" ${estado === k ? 'checked' : ''}><span>${ICONE_TAREFA[k]} ${n}</span></label>`).join('')}</div></div>
+    ${rId ? `<div class="autor">🗣️ Da reunião: ${esc(porId('reunioes', rId)?.titulo || '')}</div>` : ''}
     ${t?.estado === 'feita' && t.feita_por ? `<div class="autor">Feita por ${esc(t.feita_por)} · ${fmtQuando(t.feita_em)}</div>` : ''}
     ${autor(t)}
     <div class="acoes">
@@ -1310,16 +1585,17 @@ function abrirTarefa(id) {
         pessoa_id: idOuNull(f.get('pessoa_id')),
         dia: f.get('dia') || null,
         estado: novo,
+        reuniao_id: rId,
       };
       let acaoTexto;
       if (novo === 'feita' && t?.estado !== 'feita') {
         v.feita_por = utilizadorAtual()?.nome ?? null; v.feita_em = new Date().toISOString(); acaoTexto = 'marcou como feita';
       } else if (novo !== 'feita' && t?.estado === 'feita') { v.feita_por = null; v.feita_em = null; }
       if (t && novo === 'a_tratar' && t.estado !== 'a_tratar') acaoTexto = 'começou a tratar';
-      acao(() => guardar('tarefas', v, t?.id, t ? acaoTexto : undefined), 'Tarefa guardada');
+      acao(() => guardar('tarefas', v, t?.id, t ? acaoTexto : undefined), 'Tarefa guardada', voltar);
     };
     if (t) $('#apagar-tar', el).onclick = () => {
-      if (confirm(`Apagar a tarefa "${t.nome}"?`)) acao(() => apagar('tarefas', t.id), 'Tarefa apagada');
+      if (confirm(`Apagar a tarefa "${t.nome}"?`)) acao(() => apagar('tarefas', t.id), 'Tarefa apagada', voltar);
     };
   });
 }
@@ -1434,11 +1710,11 @@ function abrirPatrocinador(id) {
   });
 }
 
-function abrirPatrocinio(id) {
+function abrirPatrocinio(id, pre = {}) {
   const p = id ? porId('patrocinios', id) : null;
   const tipo = p?.tipo ?? 'dinheiro';
   const eventos = [...D.eventos].sort((a, b) => b.data.localeCompare(a.data));
-  const eventoSel = p ? (p.evento_id ?? (p.evento_texto ? 'outro' : '')) : '';
+  const eventoSel = p ? (p.evento_id ?? (p.evento_texto ? 'outro' : '')) : (pre.evento_id ?? '');
   const html = `
   <form id="f-pat">
     <div class="campo"><label>Patrocinador</label><select name="patrocinador_id" class="sel-patr" required>${optsPatrocinadores(p?.patrocinador_id ?? '')}</select>
@@ -1496,10 +1772,10 @@ function abrirPatrocinio(id) {
         v.itens = lerItens(form); v.valor = null;
         if (!v.itens.length) return toast('Escolhe pelo menos um produto.', true);
       }
-      acao(() => guardar('patrocinios', v, p?.id), 'Patrocínio guardado');
+      acao(() => guardar('patrocinios', v, p?.id), 'Patrocínio guardado', pre.voltar);
     };
     if (p) $('#apagar-pat', el).onclick = () => {
-      if (confirm(`Apagar o patrocínio de ${nomePatrocinador(p)}?`)) acao(() => apagar('patrocinios', p.id), 'Patrocínio apagado');
+      if (confirm(`Apagar o patrocínio de ${nomePatrocinador(p)}?`)) acao(() => apagar('patrocinios', p.id), 'Patrocínio apagado', pre.voltar);
     };
   });
 }
@@ -1517,21 +1793,37 @@ function linhaPessoa(p) {
 function vEquipas() {
   const ord = l => [...l].sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
   const semEquipa = ord(D.pessoas.filter(p => !equipa(p.equipa_id)));
-  return `
-  ${D.equipas.map(e => {
-    const membros = ord(D.pessoas.filter(p => p.equipa_id === e.id));
+  const cartao = (chave, titulo, cor, membros, eqId) => {
+    const aberta = S.equipasAbertas.has(chave);
+    const primeiros = membros.slice(0, 3).map(p => p.nome);
+    const resto = membros.length - primeiros.length;
     return `<div class="cartao">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-        <span class="ponto" style="--c:${esc(e.cor)};width:16px;height:16px"></span>
-        <h3 style="margin:0;flex:1">${esc(e.nome)} <span class="sub" style="font-weight:400">· ${membros.length}</span></h3>
-        <button class="btn peq" data-acao="editarEquipa" data-id="${e.id}">Editar</button>
+      <div class="equipa-topo">
+        ${cor ? `<span class="ponto" style="--c:${esc(cor)};width:16px;height:16px"></span>` : ''}
+        <h3 style="margin:0;flex:1">${esc(titulo)}</h3>
+        <span class="sub">${membros.length} pessoa${membros.length === 1 ? '' : 's'}</span>
       </div>
-      ${membros.length ? `<ul class="lista">${membros.map(linhaPessoa).join('')}</ul>` : '<div class="vazio">Sem pessoas.</div>'}
-      <div class="acoes"><button class="btn bloco peq" data-acao="novaPessoa" data-equipa="${e.id}">+ Pessoa</button></div>
+      ${aberta
+        ? (membros.length ? `<ul class="lista">${membros.map(linhaPessoa).join('')}</ul>` : '<div class="vazio">Sem pessoas.</div>')
+        : `<div class="sub resumo-nomes">${membros.length ? esc(primeiros.join(', ')) + (resto > 0 ? ` e mais ${resto}` : '') : 'Sem pessoas.'}</div>`}
+      <div class="acoes">
+        ${membros.length ? `<button class="btn peq azul-txt" data-acao="abrirEquipaLista" data-chave="${chave}">${aberta ? 'Esconder ▴' : `Ver todos (${membros.length}) ▾`}</button>` : ''}
+        ${aberta || !membros.length ? (eqId ? `<button class="btn peq" data-acao="novaPessoa" data-equipa="${eqId}">+ Pessoa</button>` : '') : ''}
+        ${eqId ? `<button class="btn peq" data-acao="editarEquipa" data-id="${eqId}" style="flex:0 0 auto">Editar</button>` : ''}
+      </div>
     </div>`;
-  }).join('')}
-  ${semEquipa.length ? `<div class="cartao"><h3>Sem equipa</h3><ul class="lista">${semEquipa.map(linhaPessoa).join('')}</ul></div>` : ''}
-  <button class="btn bloco" data-acao="novaEquipa">+ Nova equipa</button>`;
+  };
+  return `
+  <input type="search" class="procurar" data-procurar placeholder="🔍 Procurar pessoa…" value="${esc(S.procurarPessoa || '')}">
+  ${S.procurarPessoa ? (() => {
+    const q = S.procurarPessoa.toLowerCase();
+    const r = ord(D.pessoas.filter(p => p.nome.toLowerCase().includes(q)));
+    return r.length ? `<div class="cartao" style="padding:4px 14px"><ul class="lista">${r.map(p => linhaPessoa(p).replace('<div class="sub">', `<div class="sub">${esc(equipa(p.equipa_id)?.nome || 'Sem equipa')} · `)).join('')}</ul></div>`
+      : '<div class="vazio">Ninguém encontrado.</div>';
+  })() : `
+  ${D.equipas.map(e => cartao('e' + e.id, e.nome, e.cor, ord(D.pessoas.filter(p => p.equipa_id === e.id)), e.id)).join('')}
+  ${semEquipa.length ? cartao('sem', 'Sem equipa', null, semEquipa, null) : ''}
+  <button class="btn bloco" data-acao="novaEquipa">+ Nova equipa</button>`}`;
 }
 
 function abrirEquipa(id) {
@@ -1668,7 +1960,13 @@ function vConfig() {
       </ul>
     </div>
     <div class="cartao">
+      <h3>Cópia de segurança</h3>
+      <p class="dica" style="margin:0 0 10px">Descarrega todos os dados para um ficheiro Excel (uma folha por lista). Faz isto de vez em quando e guarda o ficheiro.</p>
+      <button class="btn bloco" data-acao="exportar">📥 Exportar tudo para Excel</button>
+    </div>
+    <div class="cartao">
       <h3>Neste aparelho</h3>
+      <div class="sub" style="margin-bottom:8px">${S.admin ? '🔑 Conta de administrador (pode apagar)' : 'Conta normal (pode ver, adicionar e alterar)'}</div>
       <div style="display:flex;align-items:center;gap:10px">
         <div class="princ" style="flex:1"><b>${esc(eu?.nome || '—')}</b><div class="sub" style="font-size:13px;color:var(--suave)">${esc(eu?.aparelho || '')}</div></div>
         <button class="btn peq" data-acao="mudarUtilizador">Mudar</button>
@@ -1755,6 +2053,63 @@ function abrirItem(tabela, id) {
 }
 
 /* =========================================================
+   Exportar tudo para Excel (cópia de segurança)
+   ========================================================= */
+const FOLHAS = [
+  ['fins_de_semana', 'Fins de semana'], ['despesas', 'Despesas'], ['eventos', 'Eventos'], ['evento_assuntos', 'Assuntos eventos'],
+  ['encomendas_fixas', 'Encomendas fixas'], ['encomendas', 'Encomendas'], ['patrocinadores', 'Patrocinadores'],
+  ['patrocinios', 'Patrocínios'], ['tarefas', 'Tarefas'], ['reunioes', 'Reuniões'], ['reuniao_pontos', 'Assuntos reuniões'],
+  ['festa_atuacoes', 'Festa'], ['andores', 'Andores'], ['figurados', 'Figurados'], ['procissao_outros', 'Procissão outros'],
+  ['equipas', 'Equipas'], ['pessoas', 'Pessoas'], ['funcoes', 'Funções'], ['responsabilidades', 'Responsabilidades'],
+  ['categorias_despesa', 'Categorias despesa'], ['produtos', 'Produtos'], ['santos', 'Santos'],
+  ['festa_categorias', 'Categorias festa'], ['festa_responsaveis', 'Responsáveis festa'], ['utilizadores', 'Utilizadores'],
+];
+function linhaExport(tabela, x) {
+  const ref = {
+    equipa_id: ['equipa', id => equipa(id)?.nome], pessoa_id: ['pessoa', id => porId('pessoas', id)?.nome],
+    funcao_id: ['função', id => porId('funcoes', id)?.nome], responsabilidade_id: ['responsabilidade', id => porId('responsabilidades', id)?.nome],
+    categoria_id: ['categoria', id => (tabela === 'festa_atuacoes' ? porId('festa_categorias', id) : porId('categorias_despesa', id))?.nome],
+    fim_de_semana_id: ['fim de semana', id => { const f = porId('fins_de_semana', id); return f ? fmtFds(f.data_sabado) : ''; }],
+    evento_id: ['evento', id => porId('eventos', id)?.nome], produto_id: ['produto', id => nomeProduto(id)],
+    santo_id: ['santo', id => nomeSanto(id)], andor_id: ['andor', id => { const a = porId('andores', id); return a ? rotuloAndor(a) : ''; }],
+    patrocinador_id: ['patrocinador', id => porId('patrocinadores', id)?.nome], responsavel_id: ['responsável', id => porId('festa_responsaveis', id)?.nome],
+    reuniao_id: ['reunião', id => porId('reunioes', id)?.titulo],
+  };
+  const o = {};
+  for (const [k, v] of Object.entries(x)) {
+    if (['fixa_id', 'encomendada_por_id', 'utilizador_id', 'despesa_id', 'dispositivo'].includes(k)) continue;
+    if (ref[k]) { o[ref[k][0]] = v == null ? '' : (ref[k][1](v) ?? ''); continue; }
+    if (k === 'itens') { o.itens = textoItens(v); continue; }
+    if (k === 'presentes') { o.presentes = (v || []).map(id => porId('pessoas', id)?.nome).filter(Boolean).join(', '); continue; }
+    o[k.replace(/_/g, ' ')] = typeof v === 'boolean' ? (v ? 'Sim' : 'Não') : (v ?? '');
+  }
+  return o;
+}
+async function exportarExcel() {
+  try {
+    toast('A preparar o Excel…');
+    const XLSX = await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm');
+    const wb = XLSX.utils.book_new();
+    const lucro = soma(D.fins_de_semana, 'lucro_final'), patroc = soma(D.patrocinios.filter(p => p.tipo === 'dinheiro'), 'valor');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ['Comissão Senhor da Agonia — exportado em', new Date().toLocaleString('pt-PT')],
+      [], ['Lucro dos fins de semana (€)', lucro], ['Patrocínios em dinheiro (€)', patroc], ['Dinheiro total (€)', lucro + patroc],
+      ['Total de despesas (€)', soma(D.despesas, 'preco')], ['Objetivo (€)', cfgNum('objetivo_dinheiro', 80000)],
+      ['Total da festa (€)', soma(D.festa_atuacoes, 'preco') + totaisProcissao().total],
+    ]), 'Resumo');
+    for (const [t, nome] of FOLHAS) {
+      const linhas = (D[t] || []).map(x => linhaExport(t, x));
+      XLSX.utils.book_append_sheet(wb, linhas.length ? XLSX.utils.json_to_sheet(linhas) : XLSX.utils.aoa_to_sheet([['(vazio)']]), nome.slice(0, 31));
+    }
+    XLSX.writeFile(wb, `comissao-senhor-da-agonia-${hojeIso()}.xlsx`);
+    toast('Excel descarregado');
+  } catch (e) {
+    console.error(e);
+    toast('Não foi possível criar o Excel. Verifica a internet e tenta outra vez.', true);
+  }
+}
+
+/* =========================================================
    Definições (objetivo, fins de semana, dias da festa, figurado)
    ========================================================= */
 function abrirDefinicao(tipo) {
@@ -1822,10 +2177,16 @@ const ACOES = {
     }, 'Encomendas da semana removidas', () => abrirFds(fds.data_sabado));
   },
   novaTarefa: () => abrirTarefa(null),
-  editarTarefa: el => abrirTarefa(Number(el.dataset.id)),
+  editarTarefa: el => {
+    const rv = el.dataset.voltaReuniao ? Number(el.dataset.voltaReuniao) : null;
+    abrirTarefa(Number(el.dataset.id), null, rv ? () => abrirReuniao(rv) : null);
+  },
   tarefasVer: el => { S.tarefasVer = el.dataset.ver; render(); },
   novoPatrocinio: () => abrirPatrocinio(null),
-  editarPatrocinio: el => abrirPatrocinio(Number(el.dataset.id)),
+  editarPatrocinio: el => {
+    const ev = el.dataset.voltaEvento ? Number(el.dataset.voltaEvento) : null;
+    abrirPatrocinio(Number(el.dataset.id), ev ? { voltar: () => abrirEvento(ev) } : {});
+  },
   definicao: el => abrirDefinicao(el.dataset.tipo),
   festaSec: el => { S.festaSec = el.dataset.sec; render(); window.scrollTo(0, 0); },
   procSec: el => { S.procSec = el.dataset.sec; render(); },
@@ -1838,6 +2199,20 @@ const ACOES = {
   novoPatrocinador: () => abrirPatrocinador(null),
   editarPatrocinador: el => abrirPatrocinador(Number(el.dataset.id)),
   ligar: el => { window.location.href = 'tel:' + el.dataset.tel; },
+  inicioSec: el => { S.inicioSec = el.dataset.sec; render(); window.scrollTo(0, 0); },
+  eventosVer: el => { S.eventosVer = el.dataset.ver; render(); },
+  reunioesVer: el => { S.reunioesVer = el.dataset.ver; render(); },
+  abrirEquipaLista: el => { const k = el.dataset.chave; S.equipasAbertas.has(k) ? S.equipasAbertas.delete(k) : S.equipasAbertas.add(k); render(); },
+  novoAssunto: el => abrirAssunto(null, Number(el.dataset.evento)),
+  editarAssunto: el => abrirAssunto(Number(el.dataset.id)),
+  patrocinioEvento: el => { const id = Number(el.dataset.id); abrirPatrocinio(null, { evento_id: id, voltar: () => abrirEvento(id) }); },
+  abrirReuniao: el => abrirReuniao(Number(el.dataset.id)),
+  novaReuniao: el => abrirReuniao(null, el.dataset.data),
+  novoPonto: el => abrirPonto(null, Number(el.dataset.reuniao)),
+  editarPonto: el => abrirPonto(Number(el.dataset.id)),
+  tarefaReuniao: el => { const id = Number(el.dataset.reuniao); abrirTarefa(null, id, () => abrirReuniao(id)); },
+  exportar: () => exportarExcel(),
+  balancoTodos: () => { S.balancoTodos = !S.balancoTodos; render(); },
   listaSec: el => { S.listaSec = el.dataset.sec; render(); window.scrollTo(0, 0); },
   novaEquipa: () => abrirEquipa(null),
   editarEquipa: el => abrirEquipa(Number(el.dataset.id)),
@@ -1861,6 +2236,16 @@ document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-acao]');
   if (el && ACOES[el.dataset.acao]) { ev.preventDefault(); ACOES[el.dataset.acao](el); }
 });
+let tProcurar;
+document.addEventListener('input', ev => {
+  if (!ev.target.matches('[data-procurar]')) return;
+  clearTimeout(tProcurar);
+  tProcurar = setTimeout(() => {
+    S.procurarPessoa = ev.target.value;
+    render();
+    const i = $('[data-procurar]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+  }, 250);
+});
 document.addEventListener('change', ev => {
   const f = ev.target.dataset?.filtro;
   if (f) { S[f] = ev.target.value; render(); }
@@ -1873,7 +2258,9 @@ $('#form-login').addEventListener('submit', async ev => {
   ev.preventDefault();
   const erro = $('#login-erro'), btn = ev.target.querySelector('button');
   erro.hidden = true; btn.disabled = true; btn.textContent = 'A entrar…';
-  const { error } = await sb.auth.signInWithPassword({ email: EMAIL_COMISSAO, password: $('#codigo').value });
+  const codigo = $('#codigo').value;
+  let { error } = await sb.auth.signInWithPassword({ email: EMAIL_COMISSAO, password: codigo });
+  if (error && EMAIL_ADMIN) ({ error } = await sb.auth.signInWithPassword({ email: EMAIL_ADMIN, password: codigo }));
   btn.disabled = false; btn.textContent = 'Entrar';
   if (error) { erro.textContent = 'Código errado. Tenta outra vez.'; erro.hidden = false; }
 });
@@ -1925,6 +2312,8 @@ $('#form-quem').addEventListener('submit', async ev => {
 
 async function mostrar(sessao) {
   $('#carregar').hidden = false;
+  S.admin = !!sessao && sessao.user?.email === EMAIL_ADMIN;
+  document.body.classList.toggle('nao-admin', !S.admin);
   if (!sessao) {
     $('#app').hidden = true; $('#quem').hidden = true; $('#login').hidden = false; $('#codigo').value = '';
     fecharSheet();

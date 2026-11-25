@@ -259,3 +259,41 @@ h2.seccao { font-size: 16px; color: var(--cafe); margin: 18px 0 8px; }
 .ordem.sem { background: none; border: 1px dashed var(--linha); color: var(--suave); }
 .sub.fig.ok { color: #15803d; font-weight: 600; }
 .sub.fig.falta { color: #b45309; font-weight: 600; }
+
+/* só administradores apagam */
+body.nao-admin [id^="apagar-"], body.nao-admin [data-acao="apagarFds"] { display: none !important; }
+
+/* início */
+.link-equipas { display: block; width: 100%; text-align: right; border: 0; background: none; color: var(--madeira); font-weight: 600; font-size: 14px; margin: -4px 0 10px; cursor: pointer; }
+.evento .ev-nome, .cartao .ev-nome { font-size: 16px; color: var(--cafe); }
+.evento .sub { margin-top: 3px; }
+
+/* equipas */
+.equipa-topo { display: flex; align-items: center; gap: 10px; }
+.resumo-nomes { margin-top: 6px; }
+.btn.azul-txt { color: #1d4ed8; border-color: #bfdbfe; flex: 1; }
+.procurar { margin-bottom: 12px; }
+
+/* reuniões */
+.dia .ev.reu { background: #ede9fe; color: #5b21b6; }
+.presencas { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.presenca { border: 1px solid var(--linha); background: #fff; border-radius: 999px; padding: 7px 12px; font-size: 14px; cursor: pointer; color: var(--suave); }
+.presenca.sim { background: #dcfce7; border-color: #86efac; color: #166534; font-weight: 600; }
+.sub.ponto-decidido { color: #15803d; font-weight: 600; }
+.sub.ponto-adiado { color: #b45309; font-weight: 600; }
+ul.lista.cartao { list-style: none; }
+
+/* balanço */
+.balanco { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0 4px; }
+.balanco > div { background: #fff; border: 1px solid var(--linha); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 2px; }
+.balanco span { font-size: 12px; color: var(--suave); }
+.balanco b { font-size: 16px; color: var(--cafe); font-variant-numeric: tabular-nums; }
+.balanco b.pos { color: #15803d; }
+.bal-cab, .bal-linha { display: grid; grid-template-columns: 1.3fr 1fr 0.9fr; gap: 8px; align-items: center; font-size: 14px; }
+.bal-cab { font-size: 12px; color: var(--suave); padding-bottom: 4px; border-bottom: 1px solid var(--linha); }
+.bal-linha { padding: 8px 0; border-bottom: 1px solid var(--linha); font-variant-numeric: tabular-nums; }
+.bal-linha:last-of-type { border-bottom: 0; }
+.bal-linha > span:nth-child(2) { position: relative; font-weight: 700; }
+.bal-linha > span:nth-child(2) i { position: absolute; left: 0; bottom: -4px; height: 3px; background: #86efac; border-radius: 2px; }
+.bal-linha > span:nth-child(3) { text-align: right; color: var(--suave); }
+.bal-cab > span:nth-child(3) { text-align: right; }
